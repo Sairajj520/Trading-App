@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading App</title>
+    <link rel="stylesheet" href="style.css">
+<script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+
+
+</head>
+<body data-color-scheme="dark">
+    <!-- Top Navigation -->
+    <header class="top-nav">
+        <div class="nav-left">
+            <div class="logo">
+                <span class="logo-text">Trading App</span>
+            </div>
+            <div class="symbol-selector">
+                <select id="symbolSelect" class="form-control symbol-select">
+                    <option value="AAPL">AAPL</option>
+                    <option value="GOOGL">GOOGL</option>
+                    <option value="TSLA">TSLA</option>
+                </select>
+            </div>
+            <div class="timeframe-buttons">
+                <button class="btn btn-timeframe" data-timeframe="1m">1m</button>
+                <button class="btn btn-timeframe" data-timeframe="5m">5m</button>
+                <button class="btn btn-timeframe" data-timeframe="15m">15m</button>
+                <button class="btn btn-timeframe" data-timeframe="30m">30m</button>
+                <button class="btn btn-timeframe" data-timeframe="1h">1h</button>
+                <button class="btn btn-timeframe" data-timeframe="4h">4h</button>
+                <button class="btn btn-timeframe active" data-timeframe="1D">1D</button>
+                <button class="btn btn-timeframe" data-timeframe="1W">1W</button>
+            </div>
+        </div>
+        <div class="nav-center">
+            <div class="chart-controls">
+                <input type="file" id="csvUpload" accept=".csv" style="display: none;">
+                <button class="btn btn--secondary" onclick="document.getElementById('csvUpload').click()">📂 Upload CSV</button>
+                <button class="btn btn--secondary" id="toggleRealtime">🔴 Go Live</button>
+                <button class="btn btn--secondary" id="autoScale">📏 Auto Scale</button>
+                <button class="btn btn--secondary" id="streamFromServer">📡 Broker </button>
+                <button class="btn btn--secondary" id="stopSimulation" style="display: none;">⏹️ Stop</button>
+            </div>            
+        </div>
+        <div class="nav-right">
+            <button class="btn btn--secondary" id="exportChart">💾 Export</button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="main-container">
+        <!-- Left Sidebar - Drawing Tools -->
+        <aside class="left-sidebar">
+            <div class="sidebar-section">
+                <h3 class="sidebar-title">Drawing Tools</h3>
+                <div class="drawing-tools">
+                    <button class="tool-btn" data-tool="cursor" title="Cursor">
+                        <span class="tool-icon">🖱️</span>
+                        <span class="tool-label">Cursor</span>
+                    </button>
+                    <button class="tool-btn" data-tool="trendline" title="Trend Line">
+                        <span class="tool-icon">📈</span>
+                        <span class="tool-label">Trend Line</span>
+                    </button>
+                    <button class="tool-btn" data-tool="horizontal" title="Horizontal Line">
+                        <span class="tool-icon">➖</span>
+                        <span class="tool-label">Horizontal</span>
+                    </button>
+                    <button class="tool-btn" data-tool="vertical" title="Vertical Line">
+                        <span class="tool-icon">📏</span>
+                        <span class="tool-label">Vertical</span>
+                    </button>
+                    <button class="tool-btn" data-tool="rectangle" title="Rectangle">
+                        <span class="tool-icon">⬛</span>
+                        <span class="tool-label">Rectangle</span>
+                    </button>
+                    <button class="tool-btn" data-tool="text" title="Text">
+                        <span class="tool-icon">📝</span>
+                        <span class="tool-label">Text</span>
+                    </button>
+                </div>
+                <button class="btn btn--secondary btn--full-width" id="clearDrawings">
+                    🗑️ Clear All
+                </button>
+            </div>
+        </aside>
+
+        <!-- Chart Area -->
+        <main class="chart-container">
+            <div class="chart-header">
+                <div class="chart-info">
+                    <span class="current-symbol"></span>
+                    <span class="current-price">---</span>
+                    <span class="price-change">---</span>
+                </div>
+                <div class="chart-style-controls">
+                    <button class="btn btn--secondary chart-style-btn active" data-style="candlestick">📊 Candles</button>
+                    <button class="btn btn--secondary chart-style-btn" data-style="line">📈 Line</button>
+                    <button class="btn btn--secondary chart-style-btn" data-style="area">🏔️ Area</button>
+                </div>
+            </div>
+            <div id="chart" class="chart-element"></div>
+            <div class="status-bar">
+                <div class="status-left">
+                    <span id="connectionStatus" class="status status--success">🟢 Connected</span>
+                    <span id="dataMode">📊 Historical Data</span>
+                </div>
+                <div class="status-right">
+                    <span id="crosshairInfo">Move cursor to see price info</span>
+                </div>
+            </div>
+        </main>
+
+        <!-- Right Sidebar - Indicators & Watchlist -->
+        <aside class="right-sidebar">
+            <div class="sidebar-section">
+                <h3 class="sidebar-title">Indicators</h3>
+                <div class="indicators-list">
+                    <div class="indicator-item">
+                        <label class="indicator-checkbox">
+                            <input type="checkbox" id="sma20" data-indicator="sma20">
+                            <span class="checkmark"></span>
+                            SMA 20
+                        </label>
+                        <div class="indicator-color" style="background-color: #ffeb3b;"></div>
+                    </div>
+                    <div class="indicator-item">
+                        <label class="indicator-checkbox">
+                            <input type="checkbox" id="sma50" data-indicator="sma50">
+                            <span class="checkmark"></span>
+                            SMA 50
+                        </label>
+                        <div class="indicator-color" style="background-color: #2196f3;"></div>
+                    </div>
+                    <div class="indicator-item">
+                        <label class="indicator-checkbox">
+                            <input type="checkbox" id="volume" data-indicator="volume" checked>
+                            <span class="checkmark"></span>
+                            Volume
+                        </label>
+                        <div class="indicator-color" style="background-color: #607d8b;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="sidebar-section">
+                <h3 class="sidebar-title">Watchlist</h3>
+                <div class="watchlist">
+                    <div class="watchlist-item">
+                        <span class="symbol">AAPL</span>
+                        <span class="price">Loading...</span>
+                        <span class="change">--</span>
+                    </div>
+                    <div class="watchlist-item">
+                        <span class="symbol">GOOGL</span>
+                        <span class="price">Loading...</span>
+                        <span class="change">--</span>
+                    </div>
+                    <div class="watchlist-item">
+                        <span class="symbol">TSLA</span>
+                        <span class="price">Loading...</span>
+                        <span class="change">--</span>
+                    </div>
+                </div>
+                
+            </div>
+        </aside>
+    </div>
+
+    <!-- Bottom Panel -->
+    <div class="bottom-panel">
+        <div class="panel-header">
+            <span class="panel-title">Trading Panel</span>
+            <button class="btn btn--secondary btn--sm" id="toggleBottomPanel">−</button>
+        </div>
+        <div class="panel-content">
+            <div class="trading-controls">
+                <div class="control-group">
+                    <label class="form-label">Order Type</label>
+                    <select class="form-control">
+                        <option>Market</option>
+                        <option>Limit</option>
+                        <option>Stop</option>
+                    </select>
+                </div>
+                <div class="control-group">
+                    <label class="form-label">Quantity</label>
+                    <input type="number" class="form-control" placeholder="0.00" step="0.01">
+                </div>
+                <div class="control-group">
+                    <label class="form-label">Price</label>
+                    <input type="number" class="form-control" placeholder="0.00" step="0.01">
+                </div>
+                <div class="control-group">
+                    <button class="btn btn--primary">Buy</button>
+                    <button class="btn btn--secondary">Sell</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay hidden">
+        <div class="loading-spinner"></div>
+        <span class="loading-text">Loading chart data...</span>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
