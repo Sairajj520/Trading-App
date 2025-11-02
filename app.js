@@ -57,6 +57,7 @@ class TradingViewApp {
         this.dynamicCsvHeader = null;
         this.customIndicators = {}; // Store custom indicator series
         this.socket = null;
+        this.signalMarkers = [];
         // Initialize immediately - don't wait for library
         setTimeout(() => {
             this.init();
@@ -353,6 +354,7 @@ async getFallbackPrice(symbol) {
 
             this.chart = LightweightCharts.createChart(chartContainer, chartOptions);
             console.log('Chart created successfully');
+
             
             // Add candlestick series
             this.candlestickSeries = this.chart.addCandlestickSeries({
@@ -505,6 +507,7 @@ async getFallbackPrice(symbol) {
                 
                 // Clear chart
                 this.chartData = [];
+                this.signalMarkers = [];
                 this.loadData();
                 
                 // Setup custom indicators
@@ -595,7 +598,8 @@ processStreamingRow(rowData) {
     // In processStreamingRow, after updating candlestick & volume:
     this.updateCustomIndicators(candle);
 
-    
+    this.addSignalLabel(candle);
+
     // Update UI
     this.updateChartInfo();
     
@@ -605,29 +609,72 @@ processStreamingRow(rowData) {
     }
 }
 
+// Add signal label to chart when bs=0 or bs=1
+// Add signal label to chart when bs=0 or bs=1
+addSignalLabel(candle) {
+    // Check if bs column exists
+    if (candle.bs === undefined || candle.bs === null || candle.bs === '') {
+        return;
+    }
+    
+    // Convert to number for proper comparison
+    const bsValue = Number(candle.bs);
+    
+    console.log('Processing signal:', candle.time, 'bs value:', bsValue, 'type:', typeof bsValue);
+    
+    // Check if it's buy signal (1)
+    if (bsValue === 1) {
+        this.signalMarkers.push({
+            time: candle.time,
+            position: 'belowBar',
+            color: '#26a69a',
+            shape: 'circle',
+            text: 'BUY'
+        });
+        console.log('✓ BUY signal added at', candle.time);
+    } 
+    // Check if it's sell signal (0)
+    else if (bsValue === 0) {
+        this.signalMarkers.push({
+            time: candle.time,
+            position: 'aboveBar',
+            color: '#ef5350',
+            shape: 'circle',
+            text: 'SELL'
+        });
+        console.log('✓ SELL signal added at', candle.time);
+    }
+    else {
+        console.log('⚠ Invalid bs value:', bsValue);
+    }
+    
+    // Apply all markers to the candlestick series
+    if (this.candlestickSeries && this.signalMarkers.length > 0) {
+        this.candlestickSeries.setMarkers(this.signalMarkers);
+    }
+}
 
 // Setup custom indicators from CSV headers
 setupCustomIndicators() {
     if (!this.dynamicCsvHeader) return;
     
-    // Standard OHLCV columns
-    const standardColumns = ['time', 'date', 'timestamp', 'open', 'high', 'low', 'close', 'volume'];
+    // Exclude standard columns AND 'bs' column
+    const excludeColumns = ['time', 'date', 'timestamp', 'open', 'high', 'low', 'close', 'volume', 'bs'];
     
-    // Find custom indicator columns
+    // Find only indicator columns (not bs)
     const customColumns = this.dynamicCsvHeader.filter(header => 
-        !standardColumns.some(std => header.toLowerCase().includes(std.toLowerCase()))
+        !excludeColumns.includes(header.toLowerCase())
     );
+    
+    console.log('Custom indicator columns:', customColumns);
     
     // Create UI for custom indicators
     this.createCustomIndicatorUI(customColumns);
     
-    // Color palette for indicators
-    const colors = [
-        '#FF6B35', '#4CAF50', '#2196F3', '#9C27B0', '#FF9800', 
-        '#E91E63', '#00BCD4', '#8BC34A', '#FFC107', '#795548'
-    ];
+    // Color palette
+    const colors = ['#FF6B35', '#4CAF50', '#2196F3', '#9C27B0', '#FF9800'];
     
-    // Initialize custom indicator series (but don't display yet)
+    // Initialize custom indicator series
     customColumns.forEach((column, index) => {
         const color = colors[index % colors.length];
         this.customIndicators[column] = {
@@ -637,6 +684,7 @@ setupCustomIndicators() {
         };
     });
 }
+
 
 // Create UI for custom indicators
 createCustomIndicatorUI(customColumns) {
