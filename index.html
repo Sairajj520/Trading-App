@@ -31,18 +31,18 @@
                 <button class="btn btn-timeframe" data-timeframe="30m">30m</button>
                 <button class="btn btn-timeframe" data-timeframe="1h">1h</button>
                 <button class="btn btn-timeframe" data-timeframe="4h">4h</button>
-                <button class="btn btn-timeframe active" data-timeframe="1D">1D</button>
+                <button class="btn btn-timeframe" data-timeframe="1D">1D</button>
                 <button class="btn btn-timeframe" data-timeframe="1W">1W</button>
             </div>
         </div>
         <div class="nav-center">
             <div class="chart-controls">
                 <input type="file" id="csvUpload" accept=".csv" style="display: none;">
-                <button class="btn btn--secondary" onclick="document.getElementById('csvUpload').click()">📂 Upload CSV</button>
-                <button class="btn btn--secondary" id="toggleRealtime">🔴 Go Live</button>
+                <button class="btn btn--secondary" id="toggleRealtime">🟢 Go Live</button>
                 <button class="btn btn--secondary" id="autoScale">📏 Auto Scale</button>
-                <button class="btn btn--secondary" id="streamFromServer">📡 Broker </button>
-                <button class="btn btn--secondary" id="stopSimulation" style="display: none;">⏹️ Stop</button>
+                <button class="btn btn--secondary" id="streamFromServer">📡 Simulate </button>
+                <button class="btn btn--secondary" id="fetchAllData">📊 Historical Data</button>
+                <button class="btn btn--secondary" id="stopSimulation" style="display:none;">⏹ Stop</button>
             </div>            
         </div>
         <div class="nav-right">
@@ -102,7 +102,8 @@
                     <button class="btn btn--secondary chart-style-btn" data-style="area">🏔️ Area</button>
                 </div>
             </div>
-            <div id="chart" class="chart-element"></div>
+            <div id="chart" class="chart-element">
+            </div>
             <div class="status-bar">
                 <div class="status-left">
                     <span id="connectionStatus" class="status status--success">🟢 Connected</span>
@@ -112,6 +113,7 @@
                     <span id="crosshairInfo">Move cursor to see price info</span>
                 </div>
             </div>
+            <div id="ohlcTooltip" class="ohlc-tooltip"></div>
         </main>
 
         <!-- Right Sidebar - Indicators & Watchlist -->
@@ -134,14 +136,6 @@
                             SMA 50
                         </label>
                         <div class="indicator-color" style="background-color: #2196f3;"></div>
-                    </div>
-                    <div class="indicator-item">
-                        <label class="indicator-checkbox">
-                            <input type="checkbox" id="volume" data-indicator="volume" checked>
-                            <span class="checkmark"></span>
-                            Volume
-                        </label>
-                        <div class="indicator-color" style="background-color: #607d8b;"></div>
                     </div>
                 </div>
             </div>
@@ -167,38 +161,6 @@
                 
             </div>
         </aside>
-    </div>
-
-    <!-- Bottom Panel -->
-    <div class="bottom-panel">
-        <div class="panel-header">
-            <span class="panel-title">Trading Panel</span>
-            <button class="btn btn--secondary btn--sm" id="toggleBottomPanel">−</button>
-        </div>
-        <div class="panel-content">
-            <div class="trading-controls">
-                <div class="control-group">
-                    <label class="form-label">Order Type</label>
-                    <select class="form-control">
-                        <option>Market</option>
-                        <option>Limit</option>
-                        <option>Stop</option>
-                    </select>
-                </div>
-                <div class="control-group">
-                    <label class="form-label">Quantity</label>
-                    <input type="number" class="form-control" placeholder="0.00" step="0.01">
-                </div>
-                <div class="control-group">
-                    <label class="form-label">Price</label>
-                    <input type="number" class="form-control" placeholder="0.00" step="0.01">
-                </div>
-                <div class="control-group">
-                    <button class="btn btn--primary">Buy</button>
-                    <button class="btn btn--secondary">Sell</button>
-                </div>
-            </div>
-        </div>
     </div>
 
     <!-- Loading Overlay -->
