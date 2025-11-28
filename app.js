@@ -58,11 +58,37 @@ class TradingViewApp {
         this.customIndicators = {}; // Store custom indicator series
         this.socket = null;
         this.signalMarkers = [];
+        this.timeframeMap = {
+            "1m": 60,
+            "5m": 60 * 5,
+            "15m": 60 * 15,
+            "30m": 60 * 30,
+            "1h": 60 * 60,
+            "4h": 60 * 60 * 4,
+            "1D": 60 * 60 * 24,
+            "1W": 60 * 60 * 24 * 7
+        };
+        
+        // Time-stamp color
+        this.indicatorColorRanges = [
+            { start: "09:15", end: "10:00", color: "green" },
+            { start: "10:00", end: "12:30", color: "red" },
+        ];
+
+
+        this.isPaused = false;
+
         // Initialize immediately - don't wait for library
         setTimeout(() => {
             this.init();
         }, 100);
     }
+
+    formatNumber(n, dp = 2) {
+        if (n === undefined || n === null || Number.isNaN(+n)) return '—';
+        return (+n).toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp });
+      }
+    
 
     init() {
         // Hide loading overlay immediately
@@ -203,7 +229,7 @@ async getFallbackPrice(symbol) {
             const volume = Math.floor(Math.random() * 2000000) + 500000;
             
             data.push({
-                time: dateString,
+                time: Math.floor(new Date(dateString).getTime()/1000),
                 open: parseFloat(open.toFixed(2)),
                 high: parseFloat(high.toFixed(2)),
                 low: parseFloat(low.toFixed(2)),
@@ -269,7 +295,7 @@ async getFallbackPrice(symbol) {
             const volume = Math.floor(Math.random() * 2000000) + 500000;
             
             data.push({
-                time: dateString,
+                time: Math.floor(new Date(dateString).getTime()/1000),
                 open: parseFloat(open.toFixed(2)),
                 high: parseFloat(high.toFixed(2)),
                 low: parseFloat(low.toFixed(2)),
@@ -319,27 +345,44 @@ async getFallbackPrice(symbol) {
                 width: chartContainer.clientWidth,
                 height: chartContainer.clientHeight,
                 layout: {
-                    backgroundColor: this.currentTheme === 'dark' ? '#131722' : '#ffffff',
-                    textColor: this.currentTheme === 'dark' ? '#d1d4dc' : '#333333',
+                    backgroundColor: "#131722",
+                    textColor: this.currentTheme === 'dark' ? '#d1d4dc' : '#000000',         // visible grey
+                    fontSize: 12,
+                    fontFamily: "Segoe UI, Roboto, sans-serif",
                 },
                 grid: {
                     vertLines: {
-                        color: this.currentTheme === 'dark' ? '#2a2e39' : '#e1e1e1',
+                        color: "rgba(0, 0, 0, 0.04)",   // Ultra faint vertical grid
+                        style: LightweightCharts.LineStyle.Solid
                     },
                     horzLines: {
-                        color: this.currentTheme === 'dark' ? '#2a2e39' : '#e1e1e1',
-                    },
+                        color: "rgba(0, 0, 0, 0.06)",   // Slightly more visible horizontal grid
+                        style: LightweightCharts.LineStyle.Solid
+                    }
                 },
                 crosshair: {
-                    mode: LightweightCharts.CrosshairMode.Normal,
+                    mode: LightweightCharts.CrosshairMode.Magnet,  // or Normal
+                    vertLine: {
+                        visible: true,
+                        labelVisible: false,
+                        color: "rgba(0,0,0,0.25)",
+                        width: 1,
+                        style: LightweightCharts.LineStyle.Dashed,
+                    },
+                    horzLine: {
+                        visible: false
+                    }
                 },
+                
                 rightPriceScale: {
-                    borderColor: this.currentTheme === 'dark' ? '#2a2e39' : '#e1e1e1',
+                    visible: true,
+                    borderColor: "rgba(255,255,255,0.35)", // faint but visible
+                    textColor: "#000000",                  // readable
                 },
                 timeScale: {
-                    borderColor: this.currentTheme === 'dark' ? '#2a2e39' : '#e1e1e1',
-                    timeVisible: true,
-                    secondsVisible: false,
+                    visible: true,
+                    borderColor: "rgba(255,255,255,0.35)",
+                    textColor: "#000000",
                 },
                 handleScroll: {
                     mouseWheel: true,
@@ -356,36 +399,70 @@ async getFallbackPrice(symbol) {
             console.log('Chart created successfully');
 
             
+
+            
             // Add candlestick series
             this.candlestickSeries = this.chart.addCandlestickSeries({
-                upColor: this.currentTheme === 'dark' ? '#26a69a' : '#089981',
-                downColor: this.currentTheme === 'dark' ? '#ef5350' : '#f23645',
-                borderDownColor: this.currentTheme === 'dark' ? '#ef5350' : '#f23645',
-                borderUpColor: this.currentTheme === 'dark' ? '#26a69a' : '#089981',
-                wickDownColor: this.currentTheme === 'dark' ? '#ef5350' : '#f23645',
-                wickUpColor: this.currentTheme === 'dark' ? '#26a69a' : '#089981',
+                upColor: "#26a69a",
+                downColor: "#ef5350",
+                wickUpColor: "#26a69a",
+                wickDownColor: "#ef5350",
+                borderUpColor: "#26a69a",
+                borderDownColor: "#ef5350",
+                borderVisible: false,
             });
+            
             console.log('Candlestick series added');
 
             // Add volume series
             this.volumeSeries = this.chart.addHistogramSeries({
-                color: this.currentTheme === 'dark' ? '#26a69a80' : '#08998180',
+                priceScaleId: 'volume',
                 priceFormat: {
                     type: 'volume',
                 },
-                priceScaleId: '',
                 scaleMargins: {
-                    top: 0.8,
+                    top: 0.8,     // 20% height for volume
                     bottom: 0,
                 },
             });
-            console.log('Volume series added');
 
-            // Set up crosshair move handler
-            this.chart.subscribeCrosshairMove((param) => {
-                this.updateCrosshairInfo(param);
+            
+            this.chart.applyOptions({
+                leftPriceScale: {
+                    visible: false
+                },
+                rightPriceScale: {
+                    visible: true,
+                },
+                overlayPriceScales: {
+                    visible: false,
+                }
             });
 
+            this.chart.priceScale('volume').applyOptions({
+                scaleMargins: {
+                    top: 0.8,
+                    bottom: 0,
+                }
+            });
+
+            const ts = this.chart.timeScale();
+            ts.applyOptions({
+                textColor: "#000000",
+                borderColor: "rgba(0,0,0,0.1)",
+                tooltip: { visible: false },
+                timeVisible: true,
+                secondsVisible: false,
+                // Core: TradingView-style formatter in IST
+                tickMarkFormatter: (time, tickMarkType) =>
+                    this.tradingViewTickFormatter(time, tickMarkType)
+            });
+
+            
+             
+            
+            
+        
             // Handle window resize
             const resizeObserver = new ResizeObserver(() => {
                 if (this.chart && chartContainer) {
@@ -396,14 +473,165 @@ async getFallbackPrice(symbol) {
                 }
             });
             resizeObserver.observe(chartContainer);
-
             console.log('Chart initialized successfully');
-            
+            setTimeout(() => {
+                this.chart.applyOptions({
+                    layout: { textColor: "#000000" },
+                    rightPriceScale: { textColor: "#000000" },
+                    timeScale: { textColor: "#000000" }
+                });
+            }, 50);
+
+            //tooltip
+            const tooltip = document.getElementById("ohlcTooltip");
+            const chartEl = document.getElementById("chart");
+
+            let lastValidOhlc = null;   // STORE LAST VALID CANDLE (IMPORTANT)
+
+            this.chart.subscribeCrosshairMove(param => {
+
+    const mouseInside =
+        param.point &&
+        param.point.x >= 0 &&
+        param.point.y >= 0 &&
+        param.point.x <= chartEl.clientWidth &&
+        param.point.y <= chartEl.clientHeight;
+
+    if (!mouseInside) {
+        tooltip.style.display = "none";
+        return;
+    }
+
+    // Try reading candle
+    const ohlc = param.seriesData?.get(this.candlestickSeries);
+
+    // KEEP tooltip with last valid candle
+    if (!ohlc) {
+        if (lastValidOhlc === null) {
+            tooltip.style.display = "none";
+            return;
+        }
+    }
+
+    const data = ohlc || lastValidOhlc;
+    lastValidOhlc = data;   // update cache
+
+    // Candle direction color
+    const isGreen = data.close >= data.open;
+    const candleColor = isGreen ? "#26a69a" : "#ef5350";
+    const istOffsetLabel = "UTC+05:30";
+
+
+    // Date/time formatting
+    const d = new Date((param.time || lastValidOhlc.time) * 1000);
+    const dateStr = d.toLocaleDateString("en-GB", {
+        day: "2-digit", month: "short", year: "2-digit"
+    });
+    const timeStr = d.toLocaleTimeString("en-GB", {
+        hour: "2-digit", minute: "2-digit"
+    });
+
+    // Update tooltip
+    tooltip.innerHTML = `
+        <div>O <span style="color:${candleColor}">${data.open.toFixed(2)}</span></div>
+        <div>H <span style="color:${candleColor}">${data.high.toFixed(2)}</span></div>
+        <div>L <span style="color:${candleColor}">${data.low.toFixed(2)}</span></div>
+        <div>C <span style="color:${candleColor}">${data.close.toFixed(2)}</span></div>
+        <div style="margin-top:6px;opacity:0.8">${dateStr}<br>${timeStr} ${istOffsetLabel}</div>
+    `;
+
+    tooltip.style.display = "block";
+
+    // position
+    // ======== Tooltip Position (Final TradingView Version) ========
+
+        // 1. screen coordinates of chart container
+        const chartRect = chartEl.getBoundingClientRect();
+
+        // 2. desired screen position relative to crosshair
+        let screenX = chartRect.left + param.point.x;
+        let screenY = chartRect.top + param.point.y;
+
+        // Show tooltip first to measure it
+        tooltip.style.display = "block";
+        const tw = tooltip.offsetWidth;
+        const th = tooltip.offsetHeight;
+
+        const pad = 10;
+
+        // -----------------------------
+        // Horizontal flip + clamp
+        // -----------------------------
+        if (param.point.x < chartRect.width / 2) {
+            // cursor on left → tooltip on right
+            screenX += pad;
+        } else {
+            // cursor on right → tooltip on left
+            screenX -= tw + pad;
+        }
+
+        // clamp inside chart horizontally
+        if (screenX < chartRect.left + pad) {
+            screenX = chartRect.left + pad;
+        }
+        if (screenX + tw > chartRect.right - pad) {
+            screenX = chartRect.right - tw - pad;
+        }
+
+        // -----------------------------
+        // Vertical flip + clamp
+        // -----------------------------
+        if (param.point.y < chartRect.height / 2) {
+            // cursor on top → tooltip below
+            screenY += pad;
+        } else {
+            // cursor on bottom → tooltip above
+            screenY -= th + pad;
+        }
+
+        // clamp inside chart vertically
+        if (screenY < chartRect.top + pad) {
+            screenY = chartRect.top + pad;
+        }
+        if (screenY + th > chartRect.bottom - pad) {
+            screenY = chartRect.bottom - th - pad;
+        }
+
+        // -----------------------------
+        // APPLY FINAL POSITION (use absolute screen coordinates)
+        // -----------------------------
+        tooltip.style.left = `${screenX}px`;
+        tooltip.style.top  = `${screenY}px`;
+
+        });
+
+
         } catch (error) {
             console.error('Error initializing chart:', error);
             chartContainer.innerHTML = `<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #ef5350; flex-direction: column;"><div>⚠️ Error initializing chart</div><div style="font-size: 12px; margin-top: 10px;">${error.message}</div></div>`;
         }
     }
+
+    
+
+    updateCandleWidth(tf) {
+        const widths = {
+            "1m": 0.6,
+            "5m": 0.7,
+            "15m": 0.75,
+            "30m": 0.8,
+            "1h": 0.85,
+            "4h": 0.9,
+            "1D": 0.9,
+            "1W": 0.95
+        };
+        this.candlestickSeries.applyOptions({ 
+            wickVisible: true,
+            borderVisible: false,
+            barSpacing: widths[tf] || 0.7
+        });
+    }
+
 
     // Load data into chart
     loadData() {
@@ -484,93 +712,230 @@ async getFallbackPrice(symbol) {
     
     // Start broker streaming
     async startBrokerStreaming() {
-        try {
-            // Stop any existing streaming
-            this.stopAllSimulations();
+                try {
+                    // Get selected symbol
+                    const symbolSelect = document.getElementById('symbolSelect');
+                    const symbol = symbolSelect ? symbolSelect.value : 'AAPL';
+                    this.currentSymbol = symbol;
+        
+                    // 1) Prompt the user for credentials (JS prompt)
+                    const username = prompt("Enter username:");
+                    if (username === null) return; // user cancelled
+                    const password = prompt("Enter password:");
+                    if (password === null) return;
+        
+                    // Request JWT token from server
+                    const loginResp = await fetch("http://localhost:5001/api/login", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ username, password })
+                    });
+        
+                    if (!loginResp.ok) {
+                        const err = await loginResp.json().catch(()=>({error:'login failed'}));
+                        this.showNotification(`Login failed: ${err.error || err.message}`, 'error');
+                        return;
+                    }
+        
+                    const loginData = await loginResp.json();
+                    const token = loginData.token;
+                    if (!token) {
+                        this.showNotification('Login did not return a token', 'error');
+                        return;
+                    }
+        
+                    this.jwtToken = token; // store for future calls if needed
+        
+                    // Setup custom indicators UI (existing method)
+                    if (typeof this.setupCustomIndicators === 'function') {
+                        this.setupCustomIndicators();
+                    }
+        
+                    // Connect to Socket.IO with auth token
+                    this.socket = io("http://localhost:5001", {
+                    transports: ['websocket'],   
+                    upgrade: true,
+                    auth: { token }
+                    });
+
+        
+                    // Wire up socket events
+                    this.socket.on("connect", () => {
+                        console.log("Socket connected:", this.socket.id);
+                        this.showNotification("Connected to stream server", "success");
+        
+                        // Update UI: hide start, show stop
+                        const brokerBtn = document.getElementById('streamFromServer');
+                        const stopBtn = document.getElementById('stopSimulation');
+                        if (brokerBtn) brokerBtn.style.display = 'none';
+                        if (stopBtn) stopBtn.style.display = 'inline-block';
+                                
+                        // Request server to start streaming this symbol
+                        this.socket.emit("start_stream", { token, symbol, speed: this.streamingSpeed });
+                    });
+        
+                    this.socket.on("candle", (row) => {
+                        try {
+                            if (!this.dynamicCsvHeader) {
+                                //extract OHCLV | variable columns
+                                const standard = ['time','date','timestamp','open','high','low','close','volume','symbol','bs'];
+                                this.dynamicCsvHeader = Object.keys(row)
+                                    .filter(h => !standard.includes(h.toLowerCase()));
+                                // now prepare UI for these only
+                                if (this.dynamicCsvHeader.length > 0) {
+                                    this.setupCustomIndicators();
+                                }
+                            }
+                            this.processStreamingRow(row);
+                        } catch (e) {
+                            console.error("Error processing streaming row:", e);
+                        }
+                    });
+                    
+                    
+                    this.socket.on("stream_started", (info) => {
+                        console.log("Server stream started:", info);
+                    });
+                    this.socket.on("stream_stopped", (info) => {
+                        console.log("Server stream stopped:", info);
+                    });
+                    this.socket.on("end", (info) => {
+                        console.log("Server end:", info);
+                        // restore UI
+                        const brokerBtn = document.getElementById('streamFromServer');
+                        const stopBtn = document.getElementById('stopSimulation');
+                        if (brokerBtn) brokerBtn.style.display = 'inline-block';
+                        if (stopBtn) stopBtn.style.display = 'none';
+                    });
+        
+                    this.socket.on("connect_error", (err) => {
+                        console.error("Socket connect error:", err);
+                        this.showNotification("Socket connect error: " + (err.message || err), "error");
+                    });
+        
+                    this.socket.on("disconnect", (reason) => {
+                        console.log("Socket disconnected:", reason);
+                        const brokerBtn = document.getElementById('streamFromServer');
+                        const stopBtn = document.getElementById('stopSimulation');
+                        if (brokerBtn) brokerBtn.style.display = 'inline-block';
+                        if (stopBtn) stopBtn.style.display = 'none';
+                    });
+        
+                    this.isStreamingCsv = true;
+                    const dataMode = document.getElementById('dataMode');
+                    if (dataMode) dataMode.textContent = `TimescaleDB (ws): ${symbol}`;
+        
+                } catch (error) {
+                    console.error('WebSocket Stream Error:', error);
+                    this.showNotification(
+                        `Error: ${error.message}. Make sure TimescaleDB server is running on port 5001`,
+                        'error'
+                    );
+                }
+            }
+
+            togglePauseResume() {
+                this.isPaused = !this.isPaused;
+                const btn = document.getElementById('pauseResume');
             
-            // Connect to WebSocket server
-            this.socket = io('http://localhost:8080');
+                if (this.isPaused) {
+                    btn.textContent = "▶ Resume";
             
-            // Handle connection
-            this.socket.on('connect', () => {
-                console.log('Connected to WebSocket server');
-                this.showNotification('Connecting to broker...', 'info');
-                
-                // Request streaming to start
-                this.socket.emit('start_streaming');
-            });
+                    // Pause CSV
+                    if (this.csvStreamingInterval) {
+                        clearInterval(this.csvStreamingInterval);
+                        this.csvStreamingInterval = null;
+                    }
             
-            // Handle stream started
-            this.socket.on('stream_started', (data) => {
-                console.log('Stream started with headers:', data.headers);
-                this.dynamicCsvHeader = data.headers;
-                
-                // Clear chart
-                this.chartData = [];
-                this.signalMarkers = [];
-                this.loadData();
-                
-                // Setup custom indicators
-                this.setupCustomIndicators();
-                
-                this.showNotification(`Broker streaming started: ${data.filename}`, 'success');
-            });
+                    // Pause WebSocket stream
+                    if (this.socket) {
+                        this.socket.emit("stop_stream");
+                    }
             
-            // Handle new row (server-pushed)
-            this.socket.on('new_row', (rowData) => {
-                console.log('Received row:', rowData);
-                this.processStreamingRow(rowData);
-            });
+                    console.log("⏸ Streaming paused");
             
-            // Handle stream ended
-            this.socket.on('stream_ended', () => {
-                this.showNotification('Broker streaming completed!', 'success');
-                this.stopBrokerStreaming();
-            });
+                } else {
+                    btn.textContent = "⏸ Pause";
+                    console.log("▶ Streaming resumed");
             
-            // Handle errors
-            this.socket.on('stream_error', (data) => {
-                console.error('Stream error:', data.error);
-                this.showNotification(`Stream error: ${data.error}`, 'error');
-                this.stopBrokerStreaming();
-            });
+                    // Resume CSV
+                    if (this.csvFullData) {
+                        this.csvStreamingInterval = setInterval(
+                            () => this.streamNextTimescaleCandle(this.currentSymbol),
+                            this.streamingSpeed
+                        );
+                    }
             
-            // Handle disconnection
-            this.socket.on('disconnect', () => {
-                console.log('Disconnected from WebSocket server');
-                this.stopBrokerStreaming();
-            });
+                    // Resume WebSocket
+                    if (this.socket && this.jwtToken && this.currentSymbol) {
+                        this.socket.emit("start_stream", { 
+                            token: this.jwtToken, 
+                            symbol: this.currentSymbol, 
+                            speed: this.streamingSpeed 
+                        });
+                    }
+                }
+            }
             
-        } catch (error) {
-            console.error('Broker streaming error:', error);
-            this.showNotification(`Failed to start broker streaming: ${error.message}`, 'error');
+    
+// Helper: prompt for username/password and call /api/login to get JWT
+    async getJwtTokenFromPrompt() {
+            try {
+                const username = prompt('Enter username for broker stream (cancel to abort):', 'admin');
+                if (!username) return null;
+                const password = prompt('Enter password:', 'admin');
+                if (password === null) return null;
+    
+                const res = await fetch('http://localhost:5001/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                if (!res.ok) {
+                    console.error('Login failed', res.status);
+                    this.showNotification('Login failed: ' + res.status, 'error');
+                    return null;
+                }
+                const j = await res.json();
+                const token = j.token || j.access_token || j.data && j.data.token;
+                if (!token) {
+                    console.error('Token missing in login response', j);
+                    this.showNotification('Login response missing token', 'error');
+                    return null;
+                }
+                return token;
+            } catch (e) {
+                console.error('Login exception', e);
+                this.showNotification('Login error: ' + (e.message || e), 'error');
+                return null;
+            }
         }
-    }
-
-// Fetch next row from server
-
-
 // Process single row
 processStreamingRow(rowData) {
-    console.log('Processing row:', rowData); // Debug log
+    console.log('Processing row:', rowData);
     
     // Extract OHLCV data
     const candle = {
-        time: rowData.time || rowData.date || rowData.timestamp,
+        time: this.convertToUnixSeconds(rowData.time || rowData.date || rowData.timestamp), 
         open: parseFloat(rowData.open),
         high: parseFloat(rowData.high),
         low: parseFloat(rowData.low),
         close: parseFloat(rowData.close),
-        volume: parseFloat(rowData.volume) || 0
+        volume: parseFloat(rowData.volume) || 0,
+        bs: rowData.bs !== undefined ? rowData.bs : null
     };
     
+    
+    // Extract custom indicator values (OP1, OP2, etc.)
     if (this.dynamicCsvHeader) {
-        const standardColumns = ['time', 'date', 'timestamp', 'open', 'high', 'low', 'close', 'volume'];
+        const standardColumns = ['time', 'date', 'timestamp', 'open', 'high', 'low', 'close', 'volume', 'bs'];
+        
         this.dynamicCsvHeader.forEach(header => {
+            // Check if this header is NOT a standard column
             if (!standardColumns.some(std => header.toLowerCase().includes(std.toLowerCase()))) {
-                // This is a custom indicator column
+                // This is a custom indicator column (OP1, OP2, etc.)
                 const value = parseFloat(rowData[header]);
-                candle[header] = isNaN(value) ? null : value;
+                candle[header] = !isNaN(value) ? value : null;
             }
         });
     }
@@ -578,112 +943,239 @@ processStreamingRow(rowData) {
     // Add to chart data
     this.chartData.push(candle);
     
-    // Update chart series
+    // Update candlestick series
     if (this.candlestickSeries) {
         this.candlestickSeries.update(candle);
     }
     
+    // Update volume series
     if (this.volumeSeries) {
         const volumeData = {
             time: candle.time,
             value: candle.volume,
-            color: candle.close >= candle.open ? 
-                (this.currentTheme === 'dark' ? 'rgba(38,166,154,0.5)' : 'rgba(8,153,129,0.5)') :
-                (this.currentTheme === 'dark' ? 'rgba(239,83,80,0.5)' : 'rgba(242,54,69,0.5)')
+            color: candle.close > candle.open
+                ? (this.currentTheme === 'dark' ? 'rgba(38, 166, 154, 0.5)' : 'rgba(8, 153, 129, 0.5)')
+                : (this.currentTheme === 'dark' ? 'rgba(239, 83, 80, 0.5)' : 'rgba(242, 54, 69, 0.5)')
         };
         this.volumeSeries.update(volumeData);
     }
     
-    // Update custom indicators
-    // In processStreamingRow, after updating candlestick & volume:
     this.updateCustomIndicators(candle);
-
+    
+    // Update signal labels (BS)
     this.addSignalLabel(candle);
-
+    
     // Update UI
     this.updateChartInfo();
     
-    // Keep chart data manageable
+    // Keep data manageable
     if (this.chartData.length > 1000) {
         this.chartData.shift();
     }
 }
 
-// Add signal label to chart when bs=0 or bs=1
-// Add signal label to chart when bs=0 or bs=1
-addSignalLabel(candle) {
-    // Check if bs column exists
-    if (candle.bs === undefined || candle.bs === null || candle.bs === '') {
-        return;
-    }
-    
-    // Convert to number for proper comparison
-    const bsValue = Number(candle.bs);
-    
-    console.log('Processing signal:', candle.time, 'bs value:', bsValue, 'type:', typeof bsValue);
-    
-    // Check if it's buy signal (1)
-    if (bsValue === 1) {
-        this.signalMarkers.push({
-            time: candle.time,
-            position: 'belowBar',
-            color: '#26a69a',
-            shape: 'circle',
-            text: 'BUY'
-        });
-        console.log('✓ BUY signal added at', candle.time);
-    } 
-    // Check if it's sell signal (0)
-    else if (bsValue === 0) {
-        this.signalMarkers.push({
-            time: candle.time,
-            position: 'aboveBar',
-            color: '#ef5350',
-            shape: 'circle',
-            text: 'SELL'
-        });
-        console.log('✓ SELL signal added at', candle.time);
-    }
-    else {
-        console.log('⚠ Invalid bs value:', bsValue);
-    }
-    
-    // Apply all markers to the candlestick series
-    if (this.candlestickSeries && this.signalMarkers.length > 0) {
-        this.candlestickSeries.setMarkers(this.signalMarkers);
+//  timezone conversion
+convertToUnixSeconds(timestamp) {
+    try {
+        // If already Unix seconds, return it
+        if (typeof timestamp === 'number') {
+            return timestamp;
+        }
+        
+        // If it's a string like "2025-01-01 09:00:00" (without timezone)
+        if (typeof timestamp === 'string') {
+            // Remove any timezone info if present
+            const cleanTimestamp = timestamp.split('+')[0].split('Z')[0];
+            
+            // Parse as local time 
+            const date = new Date(cleanTimestamp.replace(' ', 'T'));
+            
+            // Return Unix seconds (treat as local IST)
+            return Math.floor(date.getTime() / 1000);
+        }
+        
+        return Math.floor(Date.now() / 1000);
+    } catch (e) {
+        console.error('Timestamp parse error:', timestamp, e);
+        return Math.floor(Date.now() / 1000);
     }
 }
 
-// Setup custom indicators from CSV headers
-setupCustomIndicators() {
-    if (!this.dynamicCsvHeader) return;
-    
-    // Exclude standard columns AND 'bs' column
-    const excludeColumns = ['time', 'date', 'timestamp', 'open', 'high', 'low', 'close', 'volume', 'bs'];
-    
-    // Find only indicator columns (not bs)
-    const customColumns = this.dynamicCsvHeader.filter(header => 
-        !excludeColumns.includes(header.toLowerCase())
-    );
-    
-    console.log('Custom indicator columns:', customColumns);
-    
-    // Create UI for custom indicators
-    this.createCustomIndicatorUI(customColumns);
-    
-    // Color palette
-    const colors = ['#FF6B35', '#4CAF50', '#2196F3', '#9C27B0', '#FF9800'];
-    
-    // Initialize custom indicator series
-    customColumns.forEach((column, index) => {
-        const color = colors[index % colors.length];
-        this.customIndicators[column] = {
-            series: null,
-            color: color,
-            enabled: false
-        };
-    });
+getHHMMFromUnix(timeSec) {
+    const d = new Date(timeSec * 1000);
+    return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
 }
+
+isTimeInRange(hhmm, start, end) {
+    // Convert HH:MM → number, example: "09:15" → 915
+    const t = Number(hhmm.replace(":", ""));
+    const s = Number(start.replace(":", ""));
+    const e = Number(end.replace(":", ""));
+
+    return t >= s && t < e;
+}
+
+getRangeColor(hhmm, defaultColor) {
+    let chosen = defaultColor;
+
+    this.indicatorColorRanges.forEach(r => {
+        if (this.isTimeInRange(hhmm, r.start, r.end)) {
+            chosen = r.color;
+        }
+    });
+
+    return chosen;
+}
+
+
+
+
+
+// Add signal label to chart when bs=0 or bs=1
+addSignalLabel(candle) {
+    if (!this.chart || !this.candlestickSeries) return;
+    if (candle.bs === undefined || candle.bs === null || candle.bs === '') return;
+
+    const bsValue = Number(candle.bs);
+    if (bsValue !== 0 && bsValue !== 1) return;
+
+    const isBuy = bsValue === 1;
+    const labelText = isBuy ? 'Buy' : 'Sell';
+    const cssClass = isBuy ? 'buy' : 'sell';
+    const position = isBuy ? 'below' : 'above';
+
+    // Anchor prices: for Buy anchor to LOW (pointer points to low); for Sell anchor to HIGH
+    const priceForPosition = isBuy ? candle.low : candle.high;
+    const timeForPosition = candle.time;
+
+    const chartContainer = document.getElementById('chart');
+    if (!chartContainer) return;
+
+    // create tag
+    const tag = document.createElement('div');
+    tag.className = `signal-tag ${cssClass}`;
+    tag.textContent = labelText;
+    tag.style.visibility = 'hidden';
+    chartContainer.appendChild(tag);
+
+    // pointer height MUST match CSS (6px here)
+    const POINTER_H = 6;
+    const EXTRA_MARGIN = 8; // spacing between pointer tip and tag edge / candle
+
+    const updatePosition = () => {
+        requestAnimationFrame(() => {
+            const x = this.chart.timeScale().timeToCoordinate(timeForPosition);
+            const y = this.candlestickSeries.priceToCoordinate(priceForPosition);
+    
+            if (typeof x !== 'number' || typeof y !== 'number' || Number.isNaN(x) || Number.isNaN(y)) {
+                tag.style.visibility = 'hidden';
+                return;
+            }
+    
+            const rect = chartContainer.getBoundingClientRect();
+            if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
+                tag.style.visibility = 'hidden';
+                return;
+            }
+    
+            const tagHeight = tag.offsetHeight || 20;
+            const POINTER_H = 6;
+            const EXTRA_MARGIN = 8;
+    
+            // Calculate ideal position
+            let finalY = position === 'above'
+                ? y - (tagHeight + POINTER_H + EXTRA_MARGIN)
+                : y + (POINTER_H + EXTRA_MARGIN);
+    
+            // --- Clamp the tag inside chart bounds ---
+            const minY = 5; // padding from top
+            const maxY = rect.height - tagHeight - 5; // padding from bottom
+            if (finalY < minY) finalY = minY;
+            if (finalY > maxY) finalY = maxY;
+    
+            // Apply positions
+            tag.style.left = `${x}px`;
+            tag.style.top = `${finalY}px`;
+            tag.style.visibility = 'visible';
+    
+            // trigger animation if not visible yet
+            if (!tag.classList.contains('visible')) {
+                setTimeout(() => tag.classList.add('visible'), 10);
+            }
+        });
+    };
+    
+    // initial draw
+    updatePosition();
+
+    // subscribe to continuous events (zoom/pan/scroll) for smooth updates
+    const ts = this.chart.timeScale();
+    const unsubVisible = ts.subscribeVisibleTimeRangeChange(updatePosition);
+    const unsubLogical = ts.subscribeVisibleLogicalRangeChange(updatePosition);
+    const unsubCross = this.chart.subscribeCrosshairMove(updatePosition);
+    const resizeHandler = () => requestAnimationFrame(updatePosition);
+    window.addEventListener('resize', resizeHandler);
+
+    // store for cleanup later
+    this.htmlSignalTags = this.htmlSignalTags || [];
+    this.htmlSignalTags.push({
+        time: timeForPosition,
+        price: priceForPosition,
+        el: tag,
+        unsubVisible,
+        unsubLogical,
+        unsubCross,
+        resizeHandler
+    });
+
+    // keep array bounded to avoid too many tags
+    const MAX_TAGS = 300;
+    if (this.htmlSignalTags.length > MAX_TAGS) {
+        const removed = this.htmlSignalTags.shift();
+        try {
+            if (removed.unsubVisible) removed.unsubVisible();
+            if (removed.unsubLogical) removed.unsubLogical();
+            if (removed.unsubCross) removed.unsubCross();
+            if (removed.resizeHandler) window.removeEventListener('resize', removed.resizeHandler);
+            if (removed.el && removed.el.parentNode) removed.el.parentNode.removeChild(removed.el);
+        } catch (e) { /* ignore */ }
+    }
+
+    console.log(`${labelText} tag added at ${timeForPosition}`);
+}
+
+
+
+clearSignalTags() {
+    if (!this.htmlSignalTags) return;
+    this.htmlSignalTags.forEach(t => {
+        try {
+            if (t.unsubVisibleRange) t.unsubVisibleRange();
+            if (t.unsubCrosshair) t.unsubCrosshair();
+            if (t.resizeHandler) window.removeEventListener('resize', t.resizeHandler);
+            if (t.el && t.el.parentNode) t.el.parentNode.removeChild(t.el);
+        } catch (e) {}
+    });
+    this.htmlSignalTags = [];
+}
+
+
+
+// Setup custom indicators from CSV headers
+// Replace setupCustomIndicators method
+setupCustomIndicators() {
+    if (!this.dynamicCsvHeader || this.dynamicCsvHeader.length === 0) {
+        console.log('No custom indicators available');
+        return;
+    }
+    const indicatorsOnly = this.dynamicCsvHeader.filter(algo => algo.toLowerCase() !== 'bs');
+    
+    console.log('Setting up indicators:', indicatorsOnly);
+    
+    // Create UI for each algo
+    this.createCustomIndicatorUI(indicatorsOnly);
+}
+
 
 
 // Create UI for custom indicators
@@ -698,6 +1190,8 @@ createCustomIndicatorUI(customColumns) {
         '#FF6B35', '#4CAF50', '#2196F3', '#9C27B0', '#FF9800', 
         '#E91E63', '#00BCD4', '#8BC34A', '#FFC107', '#795548'
     ];
+
+    
     
     customColumns.forEach((column, index) => {
         const color = colors[index % colors.length];
@@ -729,36 +1223,49 @@ createCustomIndicatorUI(customColumns) {
 
 // Enable custom indicator
 enableCustomIndicator(column, color) {
-    if (!this.chart || this.customIndicators[column].enabled) return;
 
-    // 1) Create line series overlayed on the main price scale
-    const series = this.chart.addLineSeries({
-        title: column.toUpperCase(),
-        color: color,
-        lineWidth: 2,
-        priceScaleId: ''
-    });
-
-    // 2) Backfill with historical data from chartData
-    const historicalData = this.chartData
-        .map(c => ({ time: c.time, value: c[column] }))
-        .filter(p => p.value != null && !isNaN(p.value));
-
-    if (historicalData.length) {
-        series.setData(historicalData);
+    if (!this.customIndicators) this.customIndicators = {};
+    if (!this.customIndicators[column]) {
+        this.customIndicators[column] = {
+            enabled: false,
+            series: null,
+            defaultColor: color
+        };
     }
 
-    // 3) Store the series and mark it enabled
-    this.customIndicators[column].series = series;
     this.customIndicators[column].enabled = true;
+
+    if (!this.customIndicators[column].series) {
+        this.customIndicators[column].series = this.chart.addLineSeries({
+            title: column.toUpperCase(),
+            lineWidth: 2,
+            priceScaleId: ''
+        });
+
+        const raw = this.chartData.filter(c => c[column] != null && !isNaN(c[column]));
+
+        const colored = raw.map(c => {
+            const hhmm = this.getHHMMFromUnix(c.time);
+
+            return {
+                time: c.time,
+                value: c[column],
+                color: this.getRangeColor(hhmm, color)
+            };
+        });
+
+        this.customIndicators[column].series.setData(colored);
+    }
 
     this.showNotification(`${column.toUpperCase()} indicator added`, 'success');
 }
 
-
 // Disable custom indicator
 disableCustomIndicator(column) {
-    if (!this.customIndicators[column].enabled) return;
+    // ✅ FIX: Check if customIndicators and indicator exist before accessing
+    if (!this.customIndicators || !this.customIndicators[column]) {
+        return;
+    }
     
     if (this.customIndicators[column].series) {
         this.chart.removeSeries(this.customIndicators[column].series);
@@ -769,35 +1276,70 @@ disableCustomIndicator(column) {
     this.showNotification(`${column.toUpperCase()} indicator removed`, 'info');
 }
 
+
 // Called by processStreamingRow on every new candle
 updateCustomIndicators(candle) {
     Object.entries(this.customIndicators).forEach(([column, cfg]) => {
-        if (cfg.enabled && cfg.series) {
-            const value = candle[column];
-            if (value != null && !isNaN(value)) {
-                // Use the same `time` and numeric `value` from candle
-                cfg.series.update({ time: candle.time, value: value });
-            }
-        }
+        if (!cfg.enabled || !cfg.series) return;
+
+        const value = candle[column];
+        if (value == null || isNaN(value)) return;
+
+        const hhmm = this.getHHMMFromUnix(candle.time);
+        const barColor = this.getRangeColor(hhmm, cfg.defaultColor);
+
+        cfg.series.update({
+            time: candle.time,
+            value: value,
+            color: barColor
+        });
     });
 }
 
 
+
+
+
+
+
 // Stop broker streaming
 stopBrokerStreaming() {
+    // stop any csv streaming interval
+    if (this.csvStreamingInterval) {
+        clearInterval(this.csvStreamingInterval);
+        this.csvStreamingInterval = null;
+    }
+
+    // stop server stream interval if any
+    if (this.serverStreamInterval) {
+        clearInterval(this.serverStreamInterval);
+        this.serverStreamInterval = null;
+    }
+
+    // Disconnect the socket entirely
     if (this.socket) {
-        // Tell server to stop
-        this.socket.emit('stop_streaming');
-        
-        // Disconnect socket
-        this.socket.disconnect();
+        try { this.socket.emit('stop_stream'); } catch(e) {}
+        try { this.socket.disconnect(); } catch(e) {}
         this.socket = null;
     }
+
+    // Reset streaming flags
+    this.isStreamingCsv = false;
+    this.isStreamingFromServer = false;
+
+    // Update UI buttons
+    const streamBtn = document.getElementById('streamFromServer');
+    const stopBtn = document.getElementById('stopSimulation');
     
-    stopSimulation.style.display = 'none';
-    brokerBtn.style.display='inline-block';
-    this.showNotification('Broker streaming stopped', 'info');
+
+    if (streamBtn) streamBtn.style.display = 'inline-block';
+    if (stopBtn) stopBtn.style.display = 'none';
+    
+
+    this.showNotification('Simulation stopped and disconnected', 'info');
+    console.log('Broker streaming fully stopped and socket disconnected');
 }
+
 
       
 
@@ -1118,20 +1660,34 @@ stopServerStreaming() {
 
 // Update the stopAllSimulations method
 stopAllSimulations() {
-    if (this.isStreamingCsv) {
-        this.stopCsvStreaming();
+
+    // Stop CSV/BROKER simulation interval
+    if (this.csvStreamingInterval) {
+        clearInterval(this.csvStreamingInterval);
+        this.csvStreamingInterval = null;
     }
-    
-    if (this.isStreamingFromServer) {
-        this.stopServerStreaming();
+    this.isStreamingCsv = false;
+
+    // Stop server stream interval (if used)
+    if (this.serverStreamInterval) {
+        clearInterval(this.serverStreamInterval);
+        this.serverStreamInterval = null;
     }
-    
+    this.isServerStreaming = false;
+
+    // Turn off live mode if active
     if (this.isRealtime) {
-        this.toggleRealtime();
+        this.isRealtime = false;
     }
-    
-    this.showNotification('All streaming stopped', 'info');
+
+    const streamBtn = document.getElementById('streamFromServer');
+    const stopBtn = document.getElementById('stopSimulation');
+    if (streamBtn) streamBtn.style.display = "inline-block";
+    if (stopBtn) stopBtn.style.display = "none";
+
+    console.log("Simulation stopped successfully");
 }
+
 
 
 // Stream the next candle from server data
@@ -1199,36 +1755,7 @@ stopServerStreaming() {
     console.log('Server streaming stopped');
 }
 
-// Parse, load, and display the entire CSV at once—no streaming
-loadCsvData(csvText) {
-    try {
-      // 1. Parse CSV into chartData
-      const data = this.parseCsvData(csvText);
-      if (!data.length) {
-        this.showNotification('CSV error: no data parsed', 'error');
-        return;
-      }
-  
-      // 2. Stop any existing CSV streaming
-      if (this.csvStreamingInterval) {
-        clearInterval(this.csvStreamingInterval);
-        this.csvStreamingInterval = null;
-        this.isStreamingCsv = false;
-        this.updateStreamingButtons(false);
-      }
-  
-      // 3. Load full dataset onto chart
-      this.chartData = data;
-      this.loadData();         // plots candlesticks and volume
-      this.updateChartInfo();  // refreshes OHLC boxes, symbol cleared
-  
-      // 4. Show success notification
-      //this.showNotification(`Loaded ${data.length} candles`, 'success');
-    } catch (e) {
-      console.error('CSV load error:', e);
-      this.showNotification(`CSV load failed: ${e.message}`, 'error');
-    }
-  }
+
   
 
 // Add this method to your TradingViewApp class (around line 400-500)
@@ -1264,33 +1791,134 @@ stopAllSimulations() {
     this.showNotification('All streaming stopped', 'info');
 }
 
+async loadFullHistory(symbol) {
+    document.getElementById("dataMode").innerText = "📦 Loading Full History...";
+
+    const res = await fetch(`http://localhost:5001/api/load-history?symbol=${symbol}`);
+    const json = await res.json();
+    if (!json.success) return;
+
+    // Save raw candles for timeframe switching
+    this.originalCandles = json.data;
+
+this.originalCandles = json.data.map(c => ({ ...c, time: this.convertToUnixSeconds(c.time) }));
+this.chartData = this.originalCandles.slice();
+
+
+//variable column
+const first = json.data[0];
+const standard = ["time","open","high","low","close","volume","symbol","bs"];
+
+this.dynamicCsvHeader = Object.keys(first).filter(
+    k => !standard.includes(k.toLowerCase())
+);
+
+this.createCustomIndicatorUI(this.dynamicCsvHeader);
+
+await this.changeTimeframe("5m");
+
+
+document.getElementById("dataMode").innerText = "📊 Full History Loaded";
+}
+
+setActiveTimeframeButton(tf) {
+    document.querySelectorAll('.btn-timeframe').forEach(btn => {
+        if (btn.dataset.timeframe === tf) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+}
+
+
+applyTimeframe(tf) {
+    this.currentTimeframe = tf;
+    this.setActiveTimeframeButton(tf);
+
+    const source = this.originalCandles || [];
+    const aggregated = this.aggregateData(tf, source);
+
+    this.candlestickSeries.setData(aggregated);
+
+    if (this.volumeVisible) this.updateVolume(aggregated);
+
+    this.updateCandleSpacing(tf);
+
+    this.applyTradingViewTimeScale(tf);
+
+    this.chart.timeScale().fitContent();
+}
+
+
+aggregateData(tf, candles) {
+    const interval = this.timeframeMap[tf];
+    if (!interval) return candles;
+
+    const result = [];
+    let bucket = null;
+    let bucketEnd = 0;
+
+    candles.forEach(c => {
+        const t = c.time;
+
+        if (!bucket || t >= bucketEnd) {
+            bucketEnd = t + interval;
+            bucket = { ...c };
+            result.push(bucket);
+        } else {
+            bucket.high = Math.max(bucket.high, c.high);
+            bucket.low = Math.min(bucket.low, c.low);
+            bucket.close = c.close;
+            bucket.volume += c.volume;
+        }
+    });
+
+    return result;
+}
+
+
     // Setup all event listeners
     setupEventListeners() {
         console.log('Setting up event listeners...');
         
      // Stream from server button
      // Broker button
-const brokerBtn = document.getElementById('streamFromServer');
-if (brokerBtn) {
-    brokerBtn.addEventListener('click', () => {
-        console.log('Broker button clicked');
-        this.startBrokerStreaming();
-        brokerBtn.style.display='none';
-        stopSimulation.style.display = 'inline-block';
-    });
-}
+    const brokerBtn = document.getElementById('streamFromServer');
+    if (brokerBtn) {
+        brokerBtn.addEventListener('click', () => {
+            console.log('Broker button clicked');
+            this.startBrokerStreaming();
+            document.getElementById("streamFromServer").style.display = "none";
+            document.getElementById("stopSimulation").style.display = "inline-block";
+        });
+    }
 
-   
-        // Add this to your setupEventListeners() method
-const stopSimulation = document.getElementById('stopSimulation');
-if (stopSimulation) {
-    stopSimulation.addEventListener('click', () => {
-        console.log('Stop simulation clicked');
-        this.stopBrokerStreaming();
-        stopSimulation.style.display = 'none';
-        brokerBtn.style.display='inline-block';
-    });
-}
+    const stopBtn = document.getElementById('stopSimulation');
+    if (stopBtn) {
+        stopBtn.addEventListener('click', () => {
+            this.stopBrokerStreaming();
+        });
+    }
+
+
+        //time frame changer
+        document.querySelectorAll('.btn-timeframe').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tf = btn.dataset.timeframe;
+                this.applyTimeframe(tf);
+            });
+        });
+
+
+        //One Shot Display
+        document.getElementById("fetchAllData").addEventListener("click", async () => {
+            const symbol = document.getElementById("symbolSelect").value;
+            this.loadFullHistory(symbol);
+        });
+
+        
+        
 
         // CSV upload
         const csvUpload = document.getElementById('csvUpload');
@@ -1801,21 +2429,149 @@ updateDynamicIndicatorsUI(customCols) {
           }
           
     }
-    
-    // Change timeframe
-    changeTimeframe(timeframe) {
-        document.querySelectorAll('.btn-timeframe').forEach(btn => {
-            btn.classList.remove('active');
-        });
-        
-        const clickedBtn = document.querySelector(`[data-timeframe="${timeframe}"]`);
-        if (clickedBtn) {
-            clickedBtn.classList.add('active');
+
+//Aggregate candle update
+aggregateData(timeframe) {
+    const interval = this.timeframeMap[timeframe];
+    if (!interval || !this.chartData.length) return this.chartData;
+
+    const aggregated = [];
+    let bucket = null;
+    let bucketEnd = 0;
+
+    this.chartData.forEach(candle => {
+        const t = candle.time;
+
+        if (!bucket || t >= bucketEnd) {
+            bucketEnd = t + interval;
+            bucket = {
+                time: t,
+                open: candle.open,
+                high: candle.high,
+                low: candle.low,
+                close: candle.close,
+                volume: candle.volume
+            };
+            aggregated.push(bucket);
+        } else {
+            bucket.high = Math.max(bucket.high, candle.high);
+            bucket.low = Math.min(bucket.low, candle.low);
+            bucket.close = candle.close;
+            bucket.volume += candle.volume;
         }
-        
-        this.currentTimeframe = timeframe;
-        this.showNotification(`Switched to ${timeframe} timeframe`, 'info');
+    });
+
+    return aggregated;
+}
+
+
+
+tradingViewTickFormatter(time, tickMarkType) {
+    // `time` is UTCTimestamp (seconds)
+    const unix = typeof time === 'number' ? time : time;
+    const d = new Date(unix * 1000);
+
+    const IST_TZ = "Asia/Kolkata";
+    const T = LightweightCharts.TickMarkType;
+
+    // FULL TradingView-style logic based on tick mark type
+    switch (tickMarkType) {
+        case T.Time:
+        case T.TimeWithSeconds:
+            // Intraday labels: HH:MM (IST)
+            return d.toLocaleTimeString("en-IN", {
+                timeZone: IST_TZ,
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+
+        case T.DayOfMonth:
+            // Day-of-month labels (bold major ticks)
+            return d.toLocaleDateString("en-IN", {
+                timeZone: IST_TZ,
+                day: "2-digit"
+            });
+
+        case T.Month:
+            // Monthly labels
+            return d.toLocaleDateString("en-IN", {
+                timeZone: IST_TZ,
+                month: "short"
+            });
+
+        case T.Year:
+            // Yearly labels
+            return d.toLocaleDateString("en-IN", {
+                timeZone: IST_TZ,
+                year: "numeric"
+            });
+
+        default:
+            // Fallback: day + month
+            return d.toLocaleDateString("en-IN", {
+                timeZone: IST_TZ,
+                day: "2-digit",
+                month: "short"
+            });
     }
+}
+
+
+//change time frame
+// Change time frame – TradingView-style timescale
+async changeTimeframe(tf) {
+    this.currentTimeframe = tf;
+
+    const aggregated = this.aggregateData(tf);
+    this.candlestickSeries.setData(aggregated);
+
+    // Volume
+    const volumeData = aggregated.map(c => ({
+        time: c.time,
+        value: c.volume,
+        color: c.close >= c.open ? "#26a69aAA" : "#ef5350AA"
+    }));
+    this.volumeSeries.setData(volumeData);
+
+    // Adjust bar spacing per timeframe (visual density)
+    const ts = this.chart.timeScale();
+    const spacingByTF = {
+        "1m": 4,
+        "5m": 5,
+        "15m": 6,
+        "30m": 7,
+        "1h": 8,
+        "4h": 10,
+        "1D": 12,
+        "1W": 14
+    };
+    ts.applyOptions({
+        barSpacing: spacingByTF[tf] || 6
+    });
+
+    // Optional: ensure first day (01) is in range
+    if (aggregated.length > 0) {
+        const firstTime = aggregated[0].time;
+        const lastTime  = aggregated[aggregated.length - 1].time;
+
+        // Midnight of first day (in UTC seconds, chart treats as UTC)
+        const dayStart = Math.floor(firstTime / 86400) * 86400;
+
+        ts.setVisibleRange({
+            from: dayStart,
+            to: lastTime
+        });
+    }
+
+    // Adjust candle body width if you still want it
+    if (this.updateCandleWidth) {
+        this.updateCandleWidth(tf);
+    }
+}
+
+
+
+    
 
     // Change chart style
     changeChartStyle(style) {
@@ -1870,7 +2626,7 @@ updateDynamicIndicatorsUI(customCols) {
             this.candlestickSeries.setData(areaData);
         }
         
-        this.showNotification(`Chart style changed to ${style}`, 'success');
+        //this.showNotification(`Chart style changed to ${style}`, 'success');
     }
 
     // Select drawing tool
