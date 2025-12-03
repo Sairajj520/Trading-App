@@ -1,6 +1,6 @@
 import eventlet
 eventlet.monkey_patch()
-
+import json
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit, disconnect
@@ -8,20 +8,22 @@ import psycopg2
 import datetime
 from datetime import timezone, timedelta
 import jwt
+from flask_socketio import SocketIO, emit, disconnect, join_room, leave_room
 
 # ---------------------------
-# CONFIG - change these for production
+# DB CONFIG 
 # ---------------------------
 APP_SECRET = "admin"
 JWT_ALGORITHM = "HS256"
 DB_CONFIG = {
     'host': 'localhost',
-    'port': 5432,
-    'database': 'postgres',
+    'port': 5436,
+    'database': 'timescale',
     'user': 'postgres',
-    'password': 'admin'
+    'password': 'postgres'
 }
-# Simple demo user store (replace with real auth)
+
+# Simple demo user store
 USERS = {
     "admin": "admin"
 }
@@ -32,13 +34,14 @@ app.config['SECRET_KEY'] = APP_SECRET
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # SocketIO using eventlet
-socketio = SocketIO(
-    app,
-    cors_allowed_origins="*",
-    async_mode='eventlet',          # explicit
-    logger=False,
-    engineio_logger=False
-)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', message_queue='redis://localhost:6379/0')
+client_sessions = {}  # sid -> { user, token, rooms:set(), ... }
+
+# symbol -> set(sid) of subscribers (local process only)
+symbol_subscribers = {}  # {'AAPL': set([sid1, sid2])}
+
+# symbol -> background task object / control flag
+symbol_tasks = {}  # {'AAPL': {'running': True, 'task': task_obj}}
 
 def get_db_connection():
     try:
@@ -59,15 +62,16 @@ def fetch_all_candles_for_symbol(symbol):
         cursor = conn.cursor()
         query = """
         SELECT 
-            c.ts,
-            c.symbol,
-            c.open,
-            c.high,
-            c.low,
-            c.close,
-            c.volume,
-            s.algo,
-            s.value
+        c.ts,
+        c.symbol,
+        c.open,
+        c.high,
+        c.low,
+        c.close,
+        c.volume,
+        s.algo,
+        s.value,
+        s.attributes
         FROM candles c
         LEFT JOIN signals s
             ON c.symbol = s.symbol
@@ -82,7 +86,7 @@ def fetch_all_candles_for_symbol(symbol):
 
         ist = timezone(timedelta(hours=5, minutes=30))
         candle_map = {}
-        for ts, sym, o, h, l, c, v, algo, value in rows:
+        for ts, sym, o, h, l, c, v, algo, value, attributes in rows:
             key = ts.isoformat()
             if key not in candle_map:
                 candle_map[key] = {
@@ -95,14 +99,27 @@ def fetch_all_candles_for_symbol(symbol):
                     "volume": float(v or 0)
                 }
             if algo:
-                # convert bs to int, others to float when possible
                 if algo.lower() == 'bs':
                     candle_map[key]['bs'] = int(value) if value is not None else None
                 else:
                     try:
                         candle_map[key][algo] = float(value) if value is not None else None
-                    except Exception:
+                    except:
                         candle_map[key][algo] = value
+
+                # attributes parsing
+                    if attributes:
+                        try:
+                            if isinstance(attributes, str):
+                                attributes = json.loads(attributes)
+
+                # extract indicator color from DB attributes
+                            if isinstance(attributes, dict) and "color" in attributes:
+                                candle_map[key][f"{algo}_color"] = attributes["color"]
+
+                        except Exception as e:
+                            print("Attributes parse error:", e)
+
 
         # return list ordered by time
         result = list(candle_map.values())
@@ -125,7 +142,6 @@ def api_login():
     password = data.get('password')
     if not username or not password:
         return jsonify({'error': 'username & password required'}), 400
-    # simple check - replace with DB or proper user store in prod
     if USERS.get(username) == password:
         payload = {
             'user': username,
@@ -133,7 +149,6 @@ def api_login():
 
         }
         token = jwt.encode(payload, APP_SECRET, algorithm=JWT_ALGORITHM)
-        # PyJWT returns bytes in some versions
         if isinstance(token, bytes):
             token = token.decode('utf-8')
         return jsonify({'token': token})
@@ -152,7 +167,7 @@ def load_history():
 # ---------------------------
 # Socket.IO: per-client session store and events
 # ---------------------------
-client_sessions = {}  # sid -> { user, token, symbol, index, candles, running }
+client_sessions = {}  # sid -> { user, token, symbol, index, candles }
 
 def verify_token(token):
     try:
@@ -166,7 +181,7 @@ def verify_token(token):
 def socket_connect():
     sid = request.sid
     print(f"Socket connected: {sid}")
-    client_sessions[sid] = {'running': False}
+    client_sessions[sid] = {'running': False, 'rooms': set()}
     emit('connected', {'msg': 'connected'})
 
 
@@ -189,36 +204,64 @@ def socket_auth(payload):
     print(f"[{sid}] authenticated as {decoded.get('user')}")
 
 
-@socketio.on('start_stream')
-def on_start_stream(payload):
+@socketio.on('subscribe')
+def on_subscribe(payload):
     """
-    payload: { token, symbol, speed }
+    payload: { token, symbols: ['AAPL','TSLA'], speed: 1000 }
     """
     sid = request.sid
     sess = client_sessions.get(sid)
     if not sess:
         emit('error', {'msg': 'session not found'})
         return
+
     token = (payload or {}).get('token')
     decoded = verify_token(token)
     if not decoded:
         emit('auth_response', {'success': False, 'error': 'Unauthorized'})
         return
-    symbol = (payload or {}).get('symbol') or 'AAPL'
+
+    symbols = (payload or {}).get('symbols') or []
     speed = int((payload or {}).get('speed') or 1000)
-    # load candles for this symbol
-    candles = fetch_all_candles_for_symbol(symbol)
-    sess.update({
-        'symbol': symbol,
-        'candles': candles,
-        'index': 0,
-        'running': True,
-        'speed': speed
-    })
-    # start background task
-    socketio.start_background_task(stream_thread, sid)
-    emit('started', {'msg': 'stream started', 'symbol': symbol})
-    print(f"[{sid}] stream started for {symbol}")
+
+    for symbol in symbols:
+        room = f"sym:{symbol}"
+        join_room(room)
+        sess['rooms'].add(room)
+
+        # add subscriber in local map
+        subscribers = symbol_subscribers.get(symbol, set())
+        subscribers.add(sid)
+        symbol_subscribers[symbol] = subscribers
+
+    emit('subscribed', {'symbols': symbols})
+
+
+@socketio.on('unsubscribe')
+def on_unsubscribe(payload):
+    sid = request.sid
+    sess = client_sessions.get(sid)
+    if not sess:
+        return
+    symbols = (payload or {}).get('symbols') or []
+    for symbol in symbols:
+        room = f"sym:{symbol}"
+        try:
+            leave_room(room)
+        except Exception:
+            pass
+        sess['rooms'].discard(room)
+
+        subscribers = symbol_subscribers.get(symbol, set())
+        subscribers.discard(sid)
+        if not subscribers:
+            symbol_subscribers.pop(symbol, None)
+            stop_symbol_playback(symbol)
+        else:
+            symbol_subscribers[symbol] = subscribers
+
+    emit('unsubscribed', {'symbols': symbols})
+
 
 
 @socketio.on('stop_stream')
@@ -236,10 +279,44 @@ def socket_disconnect():
     print(f"Socket disconnected: {sid}")
     sess = client_sessions.get(sid)
     if sess:
-        sess['running'] = False
+        # remove sid from all symbol_subscribers
+        for room in list(sess.get('rooms', [])):
+            # room format sym:SYMBOL
+            if room.startswith('sym:'):
+                symbol = room.split(':', 1)[1]
+                subscribers = symbol_subscribers.get(symbol, set())
+                subscribers.discard(sid)
+                if not subscribers:
+                    # stop playback for symbol if no local subscribers remain
+                    stop_symbol_playback(symbol)
+                else:
+                    symbol_subscribers[symbol] = subscribers
         client_sessions.pop(sid, None)
 
+@socketio.on('start_stream')
+def on_start_stream(payload):
+    token = payload.get('token')
+    symbol = payload.get('symbol')
+    speed = int(payload.get('speed') or 1000)
 
+    decoded = verify_token(token)
+    if not decoded:
+        emit('auth_response', {'success': False, 'error': 'invalid token'})
+        return
+
+    sid = request.sid
+    room = f"sym:{symbol}"
+
+    join_room(room)
+
+    subscribers = symbol_subscribers.get(symbol, set())
+    subscribers.add(sid)
+    symbol_subscribers[symbol] = subscribers
+
+    # NOW start playback
+    start_symbol_playback(symbol, speed)
+
+    emit('started', {'msg': 'simulation started', 'symbol': symbol})
 
 def stream_thread(sid):
     while True:
@@ -270,7 +347,53 @@ def stream_thread(sid):
         sess['index'] = idx + 1
         eventlet.sleep(sess.get('speed', 1000) / 1000.0)
 
+def start_symbol_playback(symbol, speed_ms=1000):
+    """
+    Start a background playback task for `symbol` if not already running.
+    The task fetches candles once and emits them to room 'sym:SYMBOL'.
+    """
+    if symbol in symbol_tasks:
+        return
 
+    control = {'running': True}
+    symbol_tasks[symbol] = {'control': control, 'task': None}
+
+    def play():
+        # fetch candles once 
+        candles = fetch_all_candles_for_symbol(symbol)
+        if isinstance(candles, dict) and 'error' in candles:
+            print(f"Playback fetch error for {symbol}: {candles}")
+            return
+
+        idx = 0
+        while control['running'] and idx < len(candles):
+            row = candles[idx]
+            # include symbol field if missing
+            if 'symbol' not in row:
+                row['symbol'] = symbol
+
+            # emit to all subscribers in this room (across processes if message_queue used)
+            try:
+                socketio.emit('candle', row, room=f"sym:{symbol}")
+            except Exception as e:
+                print("emit error:", e)
+
+            idx += 1
+            eventlet.sleep(speed_ms / 1000.0)
+
+        # cleanup when finished or stopped
+        symbol_tasks.pop(symbol, None)
+
+    task = socketio.start_background_task(play)
+    symbol_tasks[symbol]['task'] = task
+
+
+def stop_symbol_playback(symbol):
+    t = symbol_tasks.get(symbol)
+    if not t:
+        return
+    print(f"Stopping playback for symbol {symbol}")
+    t['control']['running'] = False
 
 import logging
 log = logging.getLogger('werkzeug')
