@@ -82,6 +82,7 @@ class TradingViewApp {
         setTimeout(() => {
             this.init();
         }, 100);
+        window.tradingApp = this;
     }
 
     formatNumber(n, dp = 2) {
@@ -127,6 +128,9 @@ class TradingViewApp {
         this.initializeWatchlistRealData(); // This should already be there
 
         this.updateSymbolDisplay();
+
+        this.initSocketAndHandlers();
+
     
     // Fetch initial price for default symbol
     this.fetchLiveQuote(this.currentSymbol)
@@ -711,129 +715,205 @@ async getFallbackPrice(symbol) {
     
     
     // Start broker streaming
-    async startBrokerStreaming() {
-                try {
-                    // Get selected symbol
-                    const symbolSelect = document.getElementById('symbolSelect');
-                    const symbol = symbolSelect ? symbolSelect.value : 'AAPL';
-                    this.currentSymbol = symbol;
-        
-                    // 1) Prompt the user for credentials (JS prompt)
-                    const username = prompt("Enter username:");
-                    if (username === null) return; // user cancelled
-                    const password = prompt("Enter password:");
-                    if (password === null) return;
-        
-                    // Request JWT token from server
-                    const loginResp = await fetch("http://localhost:5001/api/login", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ username, password })
-                    });
-        
-                    if (!loginResp.ok) {
-                        const err = await loginResp.json().catch(()=>({error:'login failed'}));
-                        this.showNotification(`Login failed: ${err.error || err.message}`, 'error');
-                        return;
-                    }
-        
-                    const loginData = await loginResp.json();
-                    const token = loginData.token;
-                    if (!token) {
-                        this.showNotification('Login did not return a token', 'error');
-                        return;
-                    }
-        
-                    this.jwtToken = token; // store for future calls if needed
-        
-                    // Setup custom indicators UI (existing method)
-                    if (typeof this.setupCustomIndicators === 'function') {
-                        this.setupCustomIndicators();
-                    }
-        
-                    // Connect to Socket.IO with auth token
-                    this.socket = io("http://localhost:5001", {
-                    transports: ['websocket'],   
-                    upgrade: true,
-                    auth: { token }
-                    });
+    async startBrokerStreamingDirect(symbol) {
+
+        const token = localStorage.getItem("jwt");
+        if (!token) {
+            this.showNotification("Not logged in!", "error");
+            window.location.href = "login.html";
+            return;
+        }
+    
+        this.currentSymbol = symbol;
+        this.jwtToken = token;
+    
+        // Setup indicators
+        if (typeof this.setupCustomIndicators === "function") {
+            this.setupCustomIndicators();
+        }
 
         
-                    // Wire up socket events
-                    this.socket.on("connect", () => {
-                        console.log("Socket connected:", this.socket.id);
-                        this.showNotification("Connected to stream server", "success");
-        
-                        // Update UI: hide start, show stop
-                        const brokerBtn = document.getElementById('streamFromServer');
-                        const stopBtn = document.getElementById('stopSimulation');
-                        if (brokerBtn) brokerBtn.style.display = 'none';
-                        if (stopBtn) stopBtn.style.display = 'inline-block';
-                                
-                        // Request server to start streaming this symbol
-                        this.socket.emit("start_stream", { token, symbol, speed: this.streamingSpeed });
-                    });
-        
-                    this.socket.on("candle", (row) => {
-                        try {
-                            if (!this.dynamicCsvHeader) {
-                                //extract OHCLV | variable columns
-                                const standard = ['time','date','timestamp','open','high','low','close','volume','symbol','bs'];
-                                this.dynamicCsvHeader = Object.keys(row)
-                                    .filter(h => !standard.includes(h.toLowerCase()));
-                                // now prepare UI for these only
-                                if (this.dynamicCsvHeader.length > 0) {
-                                    this.setupCustomIndicators();
-                                }
-                            }
-                            this.processStreamingRow(row);
-                        } catch (e) {
-                            console.error("Error processing streaming row:", e);
-                        }
-                    });
-                    
-                    
-                    this.socket.on("stream_started", (info) => {
-                        console.log("Server stream started:", info);
-                    });
-                    this.socket.on("stream_stopped", (info) => {
-                        console.log("Server stream stopped:", info);
-                    });
-                    this.socket.on("end", (info) => {
-                        console.log("Server end:", info);
-                        // restore UI
-                        const brokerBtn = document.getElementById('streamFromServer');
-                        const stopBtn = document.getElementById('stopSimulation');
-                        if (brokerBtn) brokerBtn.style.display = 'inline-block';
-                        if (stopBtn) stopBtn.style.display = 'none';
-                    });
-        
-                    this.socket.on("connect_error", (err) => {
-                        console.error("Socket connect error:", err);
-                        this.showNotification("Socket connect error: " + (err.message || err), "error");
-                    });
-        
-                    this.socket.on("disconnect", (reason) => {
-                        console.log("Socket disconnected:", reason);
-                        const brokerBtn = document.getElementById('streamFromServer');
-                        const stopBtn = document.getElementById('stopSimulation');
-                        if (brokerBtn) brokerBtn.style.display = 'inline-block';
-                        if (stopBtn) stopBtn.style.display = 'none';
-                    });
-        
-                    this.isStreamingCsv = true;
-                    const dataMode = document.getElementById('dataMode');
-                    if (dataMode) dataMode.textContent = `TimescaleDB (ws): ${symbol}`;
-        
-                } catch (error) {
-                    console.error('WebSocket Stream Error:', error);
-                    this.showNotification(
-                        `Error: ${error.message}. Make sure TimescaleDB server is running on port 5001`,
-                        'error'
-                    );
-                }
+    
+        // Connect to Socket.IO
+        this.socket = io("http://localhost:5001", {
+            transports: ['websocket'],
+            auth: { token }
+        });
+
+    
+    
+        this.socket.on("connect", () => {
+            console.log("Connected:", this.socket.id);
+            document.getElementById("streamFromServer").style.display = "none";
+            document.getElementById("stopSimulation").style.display = "inline-block";
+    
+            // Start server stream
+            this.socket.emit("start_stream", {
+                token,
+                symbol,
+                speed: this.streamingSpeed
+            });
+        });
+    
+        this.socket.on("candle", (row) => this.processStreamingRow(row));
+    
+        this.socket.on("end", () => {
+            document.getElementById("streamFromServer").style.display = "inline-block";
+            document.getElementById("stopSimulation").style.display = "none";
+        });
+    }
+    
+
+    async initSocketAndHandlers() {
+        const token = localStorage.getItem("jwt");
+        if (!token) {
+            this.showNotification("Please login.", "error");
+            window.location.href = "login.html";
+            return;
+        }
+    
+        this.jwtToken = token;
+    
+        // Create WebSocket connection
+        this.socket = io("http://localhost:5001", {
+            transports: ["websocket"],
+            auth: { token }
+        });
+    
+        this.socket.on("connect", () => {
+            console.log("Connected:", this.socket.id);
+        });
+    
+        // Each candle event will routed to processStreamingRow
+        this.socket.on("candle", (row) => {
+            this.routeCandleToProcess(row);
+        });
+    
+        this.socket.on("disconnect", () => {
+            this.showNotification("Disconnected from server", "warning");
+        });
+    
+        this.socket.on("connect_error", (err) => {
+            this.showNotification("Connection Error: " + err.message, "error");
+        });
+    }
+    subscribeToSymbol(symbol) {
+        if (!this.socket) return;
+    
+        this.currentSymbol = symbol;
+    
+        this.socket.emit("subscribe", {
+            token: this.jwtToken,
+            symbols: [symbol],
+            speed: this.streamingSpeed
+        });
+    }
+    
+    subscribeSelectedSymbols() {
+        const checkboxes = document.querySelectorAll("#stockList input[type='checkbox']:checked");
+        const symbols = Array.from(checkboxes).map(cb => cb.value);
+    
+        if (!symbols.length) {
+            this.showNotification("Select at least one stock", "info");
+            return;
+        }
+    
+        // FIRST SELECTED SYMBOL → display on main page
+        const firstSymbol = symbols[0];
+        this.currentSymbol = firstSymbol;
+    
+        const label = document.querySelector('.current-symbol');
+        if (label) label.textContent = firstSymbol;
+    
+        // Remaining symbols open in new tabs
+        const others = symbols.slice(1);
+        others.forEach(sym => {
+            window.open(`chart.html?symbol=${encodeURIComponent(sym)}`, "_blank");
+        });
+    
+        document.getElementById("stockModal").classList.add("hidden");
+    }
+    
+    
+
+    unsubscribeSelectedSymbols() {
+        const checkboxes = document.querySelectorAll("#stockList input[type='checkbox']:checked");
+        const symbols = Array.from(checkboxes).map(cb => cb.value);
+    
+        if (!symbols.length) return;
+    
+        this.socket.emit("unsubscribe", { token: this.jwtToken, symbols });
+    }
+    
+
+
+    routeCandleToProcess(row) {
+        const symbol = row.symbol;
+    
+        // Ensure container for this symbol exists
+        if (!this.charts) this.charts = {};
+        if (!this.charts[symbol]) this.createChartForSymbol(symbol);
+    
+        // Save global refs
+        const prevChartData = this.chartData;
+        const prevSeries = this.candlestickSeries;
+        const prevVolume = this.volumeSeries;
+        const prevSymbol = this.currentSymbol;
+    
+        // Redirect global state to this symbol
+        this.currentSymbol = symbol;
+        this.chartData = this.charts[symbol].data;
+        this.candlestickSeries = this.charts[symbol].series;
+        this.volumeSeries = this.charts[symbol].volumeSeries;
+    
+        // Ensure headers are detected (one-time)
+        if (!this.dynamicCsvHeader) {
+            const standard = ["time","date","timestamp","open","high","low","close","volume","symbol","bs"];
+            this.dynamicCsvHeader = Object.keys(row).filter(h => !standard.includes(h.toLowerCase()));
+            if (this.dynamicCsvHeader.length > 0 && typeof this.setupCustomIndicators === "function") {
+                this.setupCustomIndicators();
             }
-
+        }
+    
+        // NOW call your original logic (indicators, labels, etc.)
+        this.processStreamingRow(row);
+    
+        // Restore global state
+        this.chartData = prevChartData;
+        this.candlestickSeries = prevSeries;
+        this.volumeSeries = prevVolume;
+        this.currentSymbol = prevSymbol;
+    }
+    
+    createChartForSymbol(symbol) {
+        if (!this.charts) this.charts = {};
+        if (this.charts[symbol]) return this.charts[symbol];
+    
+        const series = this.chart.addCandlestickSeries({
+            title: symbol,
+            upColor: "#26a69a",
+            downColor: "#ef5350",
+            wickUpColor: "#26a69a",
+            wickDownColor: "#ef5350"
+        });
+    
+        const volumeSeries = this.chart.addHistogramSeries({
+            priceScaleId: 'volume',
+            priceFormat: { type: 'volume' },
+            scaleMargins: { top: 0.8, bottom: 0 }
+        });
+    
+        const obj = {
+            series,
+            volumeSeries,
+            data: []
+        };
+    
+        this.charts[symbol] = obj;
+        return obj;
+    }
+    
+    
             togglePauseResume() {
                 this.isPaused = !this.isPaused;
                 const btn = document.getElementById('pauseResume');
@@ -878,42 +958,11 @@ async getFallbackPrice(symbol) {
             }
             
     
-// Helper: prompt for username/password and call /api/login to get JWT
-    async getJwtTokenFromPrompt() {
-            try {
-                const username = prompt('Enter username for broker stream (cancel to abort):', 'admin');
-                if (!username) return null;
-                const password = prompt('Enter password:', 'admin');
-                if (password === null) return null;
-    
-                const res = await fetch('http://localhost:5001/api/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username, password })
-                });
-                if (!res.ok) {
-                    console.error('Login failed', res.status);
-                    this.showNotification('Login failed: ' + res.status, 'error');
-                    return null;
-                }
-                const j = await res.json();
-                const token = j.token || j.access_token || j.data && j.data.token;
-                if (!token) {
-                    console.error('Token missing in login response', j);
-                    this.showNotification('Login response missing token', 'error');
-                    return null;
-                }
-                return token;
-            } catch (e) {
-                console.error('Login exception', e);
-                this.showNotification('Login error: ' + (e.message || e), 'error');
-                return null;
-            }
-        }
+
 // Process single row
 processStreamingRow(rowData) {
     console.log('Processing row:', rowData);
-    
+    this.latestCandleFromServer = rowData;
     // Extract OHLCV data
     const candle = {
         time: this.convertToUnixSeconds(rowData.time || rowData.date || rowData.timestamp), 
@@ -939,6 +988,26 @@ processStreamingRow(rowData) {
             }
         });
     }
+
+    // color assign
+    Object.keys(rowData).forEach(key => {
+        if (key.endsWith("_color")) {
+            candle[key] = rowData[key];   // pass through color to candle
+        }
+    });
+
+
+    if (!this.dynamicCsvHeader || this.dynamicCsvHeader.length === 0) {
+
+        const standard = ["time","open","high","low","close","volume","symbol","bs"];
+
+        this.dynamicCsvHeader = Object.keys(rowData).filter(
+            k => !standard.includes(k.toLowerCase())
+        );
+
+        this.createCustomIndicatorUI(this.dynamicCsvHeader);
+    }
+
     
     // Add to chart data
     this.chartData.push(candle);
@@ -959,6 +1028,7 @@ processStreamingRow(rowData) {
         };
         this.volumeSeries.update(volumeData);
     }
+
     
     this.updateCustomIndicators(candle);
     
@@ -972,6 +1042,8 @@ processStreamingRow(rowData) {
     if (this.chartData.length > 1000) {
         this.chartData.shift();
     }
+
+    
 }
 
 //  timezone conversion
@@ -1026,10 +1098,6 @@ getRangeColor(hhmm, defaultColor) {
 
     return chosen;
 }
-
-
-
-
 
 // Add signal label to chart when bs=0 or bs=1
 addSignalLabel(candle) {
@@ -1159,16 +1227,18 @@ clearSignalTags() {
     this.htmlSignalTags = [];
 }
 
-
-
 // Setup custom indicators from CSV headers
-// Replace setupCustomIndicators method
+
 setupCustomIndicators() {
     if (!this.dynamicCsvHeader || this.dynamicCsvHeader.length === 0) {
         console.log('No custom indicators available');
         return;
     }
-    const indicatorsOnly = this.dynamicCsvHeader.filter(algo => algo.toLowerCase() !== 'bs');
+    const indicatorsOnly = this.dynamicCsvHeader.filter(algo => 
+        algo.toLowerCase() !== 'bs' &&
+        !algo.endsWith('_color')    // ignore color fields
+    );
+    
     
     console.log('Setting up indicators:', indicatorsOnly);
     
@@ -1176,26 +1246,41 @@ setupCustomIndicators() {
     this.createCustomIndicatorUI(indicatorsOnly);
 }
 
-
-
 // Create UI for custom indicators
 createCustomIndicatorUI(customColumns) {
     const container = document.querySelector('.indicators-list');
     if (!container) return;
-    
-    // Remove existing dynamic indicators
-    document.querySelectorAll('.dynamic-indicator-item').forEach(el => el.remove());
-    
-    const colors = [
-        '#FF6B35', '#4CAF50', '#2196F3', '#9C27B0', '#FF9800', 
-        '#E91E63', '#00BCD4', '#8BC34A', '#FFC107', '#795548'
-    ];
 
-    
-    
+    // Remove previous UI
+    document.querySelectorAll('.dynamic-indicator-item').forEach(el => el.remove());
+
     customColumns.forEach((column, index) => {
-        const color = colors[index % colors.length];
-        
+        // Ignore *_color columns
+        if (column.endsWith("_color")) return;
+
+        const dbColorField = column + "_color";
+        let indColor = null;
+
+        // ⭐ PRIORITY #1 — read color directly from latest rowData
+        if (this.latestCandleFromServer && this.latestCandleFromServer[dbColorField]) {
+            indColor = this.latestCandleFromServer[dbColorField];
+        }
+
+        // ⭐ PRIORITY #2 — read color from any existing candle
+        if (!indColor && this.chartData.length > 0) {
+            for (let c of this.chartData) {
+                if (c[dbColorField]) {
+                    indColor = c[dbColorField];
+                    break;
+                }
+            }
+        }
+
+        // ⭐ FINAL FALLBACK (ONLY if DB color missing)
+        const fallbackColors = ['#FF6B35', '#4CAF50', '#2196F3', '#9C27B0'];
+        indColor = indColor || fallbackColors[index % fallbackColors.length];
+
+        // Build UI element
         const div = document.createElement('div');
         div.className = 'indicator-item dynamic-indicator-item';
         div.innerHTML = `
@@ -1204,16 +1289,15 @@ createCustomIndicatorUI(customColumns) {
                 <span class="checkmark"></span>
                 ${column.toUpperCase()}
             </label>
-            <div class="indicator-color" style="background-color: ${color}"></div>
+            <div class="indicator-color" style="background-color: ${indColor}"></div>
         `;
-        
         container.appendChild(div);
-        
-        // Add event listener
+
+        // Link checkbox behavior
         const checkbox = div.querySelector('input');
         checkbox.addEventListener('change', (e) => {
             if (e.target.checked) {
-                this.enableCustomIndicator(column, color);
+                this.enableCustomIndicator(column, indColor);
             } else {
                 this.disableCustomIndicator(column);
             }
@@ -1221,9 +1305,9 @@ createCustomIndicatorUI(customColumns) {
     });
 }
 
+
 // Enable custom indicator
 enableCustomIndicator(column, color) {
-
     if (!this.customIndicators) this.customIndicators = {};
     if (!this.customIndicators[column]) {
         this.customIndicators[column] = {
@@ -1242,15 +1326,22 @@ enableCustomIndicator(column, color) {
             priceScaleId: ''
         });
 
+        const dbColorField = column + "_color";
+
+        // Build per-point data using DB color when available
         const raw = this.chartData.filter(c => c[column] != null && !isNaN(c[column]));
 
         const colored = raw.map(c => {
             const hhmm = this.getHHMMFromUnix(c.time);
+            // Prefer DB color from the candle if present, otherwise use provided color
+            const pointColor = (c[dbColorField] && typeof c[dbColorField] === 'string')
+                ? c[dbColorField]
+                : color;
 
             return {
                 time: c.time,
                 value: c[column],
-                color: this.getRangeColor(hhmm, color)
+                color: this.getRangeColor(hhmm, pointColor)
             };
         });
 
@@ -1260,9 +1351,10 @@ enableCustomIndicator(column, color) {
     this.showNotification(`${column.toUpperCase()} indicator added`, 'success');
 }
 
+
 // Disable custom indicator
 disableCustomIndicator(column) {
-    // ✅ FIX: Check if customIndicators and indicator exist before accessing
+    // Check if customIndicators and indicator exist before accessing
     if (!this.customIndicators || !this.customIndicators[column]) {
         return;
     }
@@ -1286,21 +1378,33 @@ updateCustomIndicators(candle) {
         if (value == null || isNaN(value)) return;
 
         const hhmm = this.getHHMMFromUnix(candle.time);
-        const barColor = this.getRangeColor(hhmm, cfg.defaultColor);
+        // Look for DB color if present
+        let dbColorField = column + "_color";
+        let useColor = candle[dbColorField] || cfg.defaultColor;
+
+        const barColor = this.getRangeColor(hhmm, useColor);
+
 
         cfg.series.update({
             time: candle.time,
             value: value,
             color: barColor
         });
+        // recolor entire series when we detect a DB color for the first time
+        if (!cfg._dbColorSeen && candle[dbColorField]) {
+            cfg._dbColorSeen = true;
+            // rebuild existing series with per-point colors (cheap for moderate data sizes)
+            const existing = this.chartData.filter(x => x[column] != null && !isNaN(x[column]));
+            const rebuilt = existing.map(c => {
+                const hhmm = this.getHHMMFromUnix(c.time);
+                const pc = c[dbColorField] || cfg.defaultColor;
+                return { time: c.time, value: c[column], color: this.getRangeColor(hhmm, pc) };
+            });
+            try { cfg.series.setData(rebuilt); } catch(e) { console.warn('rebuild series failed', e); }
+        }
+
     });
 }
-
-
-
-
-
-
 
 // Stop broker streaming
 stopBrokerStreaming() {
@@ -1339,9 +1443,6 @@ stopBrokerStreaming() {
     this.showNotification('Simulation stopped and disconnected', 'info');
     console.log('Broker streaming fully stopped and socket disconnected');
 }
-
-
-      
 
     // Update chart info display
     updateChartInfo() {
@@ -1888,7 +1989,7 @@ aggregateData(tf, candles) {
     if (brokerBtn) {
         brokerBtn.addEventListener('click', () => {
             console.log('Broker button clicked');
-            this.startBrokerStreaming();
+            this.startBrokerStreamingDirect();
             document.getElementById("streamFromServer").style.display = "none";
             document.getElementById("stopSimulation").style.display = "inline-block";
         });
@@ -1909,16 +2010,6 @@ aggregateData(tf, candles) {
                 this.applyTimeframe(tf);
             });
         });
-
-
-        //One Shot Display
-        document.getElementById("fetchAllData").addEventListener("click", async () => {
-            const symbol = document.getElementById("symbolSelect").value;
-            this.loadFullHistory(symbol);
-        });
-
-        
-        
 
         // CSV upload
         const csvUpload = document.getElementById('csvUpload');
