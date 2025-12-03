@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en" data-color-scheme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login • Trading App</title>
+    <link rel="stylesheet" href="style.css">
+
+    <style>
+        body {
+            background: var(--color-background);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: var(--font-family-base);
+        }
+
+        .login-card {
+            background: var(--color-surface);
+            padding: 32px;
+            width: 360px;
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--color-card-border);
+            position: relative;
+        }
+
+        .login-title {
+            font-size: var(--font-size-2xl);
+            font-weight: var(--font-weight-semibold);
+            text-align: center;
+            margin-bottom: 24px;
+            color: var(--color-primary);
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+            position: relative;
+        }
+
+        .login-input {
+            width: 100%;
+            padding: 12px 40px 12px 12px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--color-border);
+            background: var(--color-surface);
+            color: var(--color-text);
+            font-size: var(--font-size-base);
+            outline: none;
+        }
+
+        /* 👁 Password Toggle Icon */
+        .toggle-password {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            cursor: pointer;
+            color: var(--color-text-muted);
+            font-size: 18px;
+        }
+
+        .login-btn {
+            width: 100%;
+            margin-top: 16px;
+            padding: 12px;
+            border-radius: var(--radius-md);
+            font-size: var(--font-size-lg);
+            background: var(--color-primary);
+            color: var(--color-btn-primary-text);
+            cursor: pointer;
+            transition: background var(--duration-normal) var(--ease-standard);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .login-btn:hover {
+            background: var(--color-primary-hover);
+        }
+
+        /* 🔄 Loading Spinner */
+        .spinner {
+            border: 3px solid #ffffff30;
+            border-top: 3px solid white;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /*  Shake Animation */
+        @keyframes shake {
+            0% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            50% { transform: translateX(5px); }
+            75% { transform: translateX(-5px); }
+            100% { transform: translateX(0); }
+        }
+
+        .shake {
+            animation: shake 0.3s ease;
+        }
+
+        .error-msg {
+            color: var(--color-error);
+            margin-top: 10px;
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="login-card" id="loginCard">
+    <div class="login-title">Login</div>
+
+    <div class="form-group">
+        <input id="username"
+               class="login-input"
+               placeholder="Username"
+               autocomplete="off">
+    </div>
+
+    <div class="form-group">
+        <input id="password"
+               type="password"
+               class="login-input"
+               placeholder="Password"
+               autocomplete="new-password">
+
+        <!-- 👁 Toggle Icon -->
+        <span id="togglePass" class="toggle-password">👁️</span>
+    </div>
+
+    <button id="loginBtn" class="login-btn">Login</button>
+
+    <div id="errorMsg" class="error-msg">Invalid credentials</div>
+</div>
+
+<script>
+    const usernameEl = document.getElementById("username");
+    const passwordEl = document.getElementById("password");
+    const loginBtn = document.getElementById("loginBtn");
+    const errorMsg = document.getElementById("errorMsg");
+    const loginCard = document.getElementById("loginCard");
+    const togglePass = document.getElementById("togglePass");
+
+    /* 👁 Password Show/Hide */
+    togglePass.onclick = () => {
+        if (passwordEl.type === "password") {
+            passwordEl.type = "text";
+            togglePass.textContent = "✖️";
+        } else {
+            passwordEl.type = "password";
+            togglePass.textContent = "👁️";
+        }
+    };
+
+    /* ⌨️ Allow ENTER key to submit */
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+            loginBtn.click();
+        }
+    });
+
+    /* MAIN LOGIN HANDLER */
+    loginBtn.onclick = async () => {
+
+        const username = usernameEl.value.trim();
+        const password = passwordEl.value.trim();
+
+        if (!username || !password) {
+            showError("Please enter username & password");
+            return;
+        }
+
+        // Show spinner
+        loginBtn.innerHTML = `<div class="spinner"></div> Logging in...`;
+        loginBtn.disabled = true;
+
+        try {
+            const res = await fetch("http://localhost:5001/api/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await res.json();
+
+            if (!res.ok) {
+                showError(data.error || "Invalid credentials");
+                return;
+            }
+
+            // Save JWT
+            localStorage.setItem("jwt", data.token);
+
+            // Redirect
+            window.location.href = "index.html";
+
+        } catch (e) {
+            showError("Server error");
+        }
+    };
+
+    /* Error Handler with Shake */
+    function showError(msg) {
+        errorMsg.style.display = "block";
+        errorMsg.textContent = msg;
+
+        loginCard.classList.remove("shake");
+        void loginCard.offsetWidth;  // restart animation
+        loginCard.classList.add("shake");
+
+        loginBtn.innerHTML = "Login";
+        loginBtn.disabled = false;
+    }
+</script>
+
+</body>
+</html>
