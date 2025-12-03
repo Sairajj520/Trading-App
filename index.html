@@ -7,8 +7,12 @@
     <link rel="stylesheet" href="style.css">
 <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
 <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
-
-
+<script>
+    const token = localStorage.getItem("jwt");
+    if (!token) {
+        window.location.href = "login.html";
+    }
+    </script>
 </head>
 <body data-color-scheme="dark">
     <!-- Top Navigation -->
@@ -17,13 +21,7 @@
             <div class="logo">
                 <span class="logo-text">Trading App</span>
             </div>
-            <div class="symbol-selector">
-                <select id="symbolSelect" class="form-control symbol-select">
-                    <option value="AAPL">AAPL</option>
-                    <option value="GOOGL">GOOGL</option>
-                    <option value="TSLA">TSLA</option>
-                </select>
-            </div>
+            <button id="openStockModal" class="btn btn--secondary btn--sm">Select Stock</button>            
             <div class="timeframe-buttons">
                 <button class="btn btn-timeframe" data-timeframe="1m">1m</button>
                 <button class="btn btn-timeframe" data-timeframe="5m">5m</button>
@@ -37,6 +35,9 @@
         </div>
         <div class="nav-center">
             <div class="chart-controls">
+                <button id="uploadCSVBtn" class="btn btn--secondary">
+                    📄 Upload CSV
+                </button>
                 <input type="file" id="csvUpload" accept=".csv" style="display: none;">
                 <button class="btn btn--secondary" id="toggleRealtime">🟢 Go Live</button>
                 <button class="btn btn--secondary" id="autoScale">📏 Auto Scale</button>
@@ -93,8 +94,8 @@
             <div class="chart-header">
                 <div class="chart-info">
                     <span class="current-symbol"></span>
-                    <span class="current-price">---</span>
-                    <span class="price-change">---</span>
+                    <!--<span class="current-price">---</span>
+                    <span class="price-change">---</span>-->
                 </div>
                 <div class="chart-style-controls">
                     <button class="btn btn--secondary chart-style-btn active" data-style="candlestick">📊 Candles</button>
@@ -170,5 +171,86 @@
     </div>
 
     <script src="app.js"></script>
+    <script>
+        function openChartTabsForSelectedSymbols() {
+            const sel = document.getElementById('symbolSelect');
+            if (!sel) return alert('Symbol selector not found');
+            const symbols = Array.from(sel.selectedOptions).map(o => o.value).filter(Boolean);
+            if (!symbols.length) return alert('Select at least one symbol');
+        
+            // Max tabs safety
+            const MAX_TABS = 12;
+            if (symbols.length > MAX_TABS) {
+                if (!confirm(`Open ${symbols.length} tabs? This may be heavy. Continue?`)) return;
+            }
+        
+            // Open each symbol in a new tab, passing symbol in query param
+            symbols.forEach(sym => {
+                window.open(`chart.html?symbol=${encodeURIComponent(sym)}`, `_blank`);
+            });
+        }
+
+        </script>
+        <!-- STOCK SELECTION MODAL -->
+<div id="stockModal" class="modal-overlay hidden">
+    <div class="modal-box">
+        <h2 class="modal-title">Select Stocks</h2>
+
+        <div class="stock-list-container">
+            <ul id="stockList" class="stock-list">
+                <li><label><input type="checkbox" value="Banknifty"> Banknifty</label></li>
+                <li><label><input type="checkbox" value="AAPL"> AAPL</label></li>
+                <li><label><input type="checkbox" value="GOOGL"> GOOGL</label></li>
+                <li><label><input type="checkbox" value="TSLA"> TSLA</label></li>
+                <li><label><input type="checkbox" value="MSFT"> MSFT</label></li>
+                <li><label><input type="checkbox" value="AMZN"> AMZN</label></li>
+                <li><label><input type="checkbox" value="NVDA"> NVDA</label></li>
+                <li><label><input type="checkbox" value="META"> META</label></li>
+            </ul>
+        </div>
+
+        <div class="modal-buttons">
+            <button id="subscribeBtn" class="btn btn--secondary">Subscribe</button>
+            <button id="unsubscribeBtn" class="btn btn--outline">Unsubscribe</button>
+            <button id="closeStockModal" class="btn btn--danger">Close</button>
+        </div>
+    </div>
+</div>
+<script>
+    const modal = document.getElementById("stockModal");
+    const openBtn = document.getElementById("openStockModal");
+    const closeBtn = document.getElementById("closeStockModal");
+    
+    openBtn.addEventListener("click", () => {
+        modal.classList.remove("hidden");
+    });
+    
+    closeBtn.addEventListener("click", () => {
+        modal.classList.add("hidden");
+    });
+    </script>
+<script>
+    document.getElementById("uploadCSVBtn").onclick = () => {
+    document.getElementById("csvUpload").click();
+    };
+
+    document.getElementById("subscribeBtn").addEventListener("click", () => {
+        window.tradingApp.subscribeSelectedSymbols();
+    });
+    
+    document.getElementById("unsubscribeBtn").addEventListener("click", () => {
+        window.tradingApp.unsubscribeSelectedSymbols();
+    });
+    document.addEventListener("DOMContentLoaded", function() {
+    document.getElementById("fetchAllData").addEventListener("click", () => {
+        window.tradingApp.loadFullHistory(window.tradingApp.currentSymbol);
+    });
+
+    document.getElementById("streamFromServer").addEventListener("click", () => {
+        window.tradingApp.startBrokerStreamingDirect(window.tradingApp.currentSymbol);
+    });
+});
+
+    </script> 
 </body>
 </html>
