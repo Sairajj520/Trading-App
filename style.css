@@ -1,3 +1,8 @@
+html, body {
+  height: 100%;
+  overflow: hidden;   
+}
+
 :root {
   /* Primitive Color Tokens */
   --color-white: rgba(255, 255, 255, 1);
@@ -811,13 +816,17 @@ select.form-control {
 
 /* Main Container */
 .main-container {
-  display: flex;
-  grid-template-columns: 200px 1fr 240px;
-  height: calc(100vh - 60px);
+  display: grid;
+  grid-template-columns: 180px 1fr 190px;   /*  Left | Chart | Right */
+  height: calc(100vh - 48px);               
   margin-top: 48px;
-  gap: 1px;
+  overflow: hidden;
   background-color: var(--color-border);
 }
+
+
+
+
 
 /* Sidebars */
 .left-sidebar, .right-sidebar {
@@ -993,12 +1002,12 @@ select.form-control {
 
 /* Chart Container */
 .chart-container {
-  flex-grow: 1;
   height: 100%;
-  width: 40%;
   display: flex;
-  flex-direction: column;
+  flex-direction: column;   
+  overflow: hidden;
 }
+
 
 
 .chart-header {
@@ -1056,10 +1065,10 @@ select.form-control {
 }
 
 .chart-element {
-  flex-grow: 1;
-    width: 100%;
-    height: calc(100vh - 100px);
+  flex: 1;                  
+  width: 100%;
   background-color: var(--color-background);
+  position: relative;
 }
 
 .status-bar {
@@ -1358,4 +1367,146 @@ select.form-control {
 }
 
 #chart { position: relative; } /* ensure tooltip is positioned relative to chart */
+
+/* MODAL OVERLAY */
+.modal-overlay {
+  position: fixed;
+  inset: 0;                         
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0,0,0,0.65);
+  z-index: 2000;
+}
+
+
+.hidden {
+  display: none !important;
+}
+
+/* MODAL BOX */
+.modal-box {
+  width: 380px;
+  background: var(--color-surface);
+  padding: 20px;
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--color-card-border);
+}
+
+.modal-title {
+  font-size: 1.3rem;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: var(--color-primary);
+  text-align: center;
+}
+
+/* LIST BOX */
+.stock-list-container {
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--color-background);
+  border: 1px solid var(--color-border);
+  padding: 10px;
+  border-radius: 10px;
+}
+
+.stock-list li {
+  list-style: none;
+  margin: 8px 0;
+  font-size: 1rem;
+}
+
+/* MODAL BUTTONS */
+.modal-buttons {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 18px;
+}
+
+
+.signal-tag {
+  position: absolute;
+  padding: 3px 8px;
+  background: #000;
+  color: #fff;
+  border-radius: 4px;
+  font-size: 11px;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity .2s ease;
+}
+
+.signal-tag.visible {
+  opacity: 1;
+}
+
+.signal-tag.buy {
+  background: #26a69a;
+}
+
+.signal-tag.sell {
+  background: #ef5350;
+}
+
+.sticky-signal {
+  position: absolute;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  max-width: 180px;
+  line-height: 1.25;
+
+  background: rgba(255,255,255,0.88);
+  backdrop-filter: blur(3px);
+
+  border: 1px solid rgba(0,0,0,0.1);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+
+  pointer-events: none;
+  white-space: normal;
+  z-index: 9999;
+}
+
+/* BUY / SELL color accent */
+.sticky-buy { border-left: 4px solid #16a34a; }
+.sticky-sell { border-left: 4px solid #dc2626; }
+
+/* TITLE */
+.sticky-title {
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+/* REASON TEXT */
+.sticky-reason {
+  font-size: 11px;
+  opacity: 0.95;
+}
+
+/* BOTTOM ARROW (▼ pointing down to candle) */
+.sticky-signal::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: -7px;     /* arrow below box */
+  width: 0;
+  height: 0;
+
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 7px solid rgba(255,255,255,0.88); /* arrow pointing DOWN */
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.15));
+}
+
+.sticky-signal,
+.sticky-signal * {
+    color: #111 !important;        /* force readable black text */
+}
+
+
 
