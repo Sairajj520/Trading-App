@@ -380,13 +380,14 @@ async getFallbackPrice(symbol) {
                 
                 rightPriceScale: {
                     visible: true,
-                    borderColor: "rgba(255,255,255,0.35)", // faint but visible
-                    textColor: "#000000",                  // readable
+                    borderColor: "rgba(255,255,255,0.35)", 
+                    textColor: "#000000",                  
                 },
                 timeScale: {
                     visible: true,
                     borderColor: "rgba(255,255,255,0.35)",
                     textColor: "#000000",
+                    hour12: false
                 },
                 handleScroll: {
                     mouseWheel: true,
@@ -523,7 +524,6 @@ async getFallbackPrice(symbol) {
     // Candle direction color
     const isGreen = data.close >= data.open;
     const candleColor = isGreen ? "#26a69a" : "#ef5350";
-    const istOffsetLabel = "UTC+05:30";
 
 
     // Date/time formatting
@@ -531,9 +531,12 @@ async getFallbackPrice(symbol) {
     const dateStr = d.toLocaleDateString("en-GB", {
         day: "2-digit", month: "short", year: "2-digit"
     });
-    const timeStr = d.toLocaleTimeString("en-GB", {
-        hour: "2-digit", minute: "2-digit"
+    const timeStr = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true
     });
+    
 
     // Update tooltip
     tooltip.innerHTML = `
@@ -541,7 +544,7 @@ async getFallbackPrice(symbol) {
         <div>H <span style="color:${candleColor}">${data.high.toFixed(2)}</span></div>
         <div>L <span style="color:${candleColor}">${data.low.toFixed(2)}</span></div>
         <div>C <span style="color:${candleColor}">${data.close.toFixed(2)}</span></div>
-        <div style="margin-top:6px;opacity:0.8">${dateStr}<br>${timeStr} ${istOffsetLabel}</div>
+        <div style="margin-top:6px;opacity:0.8">${dateStr}<br>${timeStr}</div>
     `;
 
     tooltip.style.display = "block";
@@ -972,7 +975,10 @@ processStreamingRow(rowData) {
         close: parseFloat(rowData.close),
         volume: parseFloat(rowData.volume) || 0,
         bs: rowData.bs !== undefined ? rowData.bs : null
+        
     };
+ 
+
     
     
     // Extract custom indicator values (OP1, OP2, etc.)
@@ -1101,116 +1107,76 @@ getRangeColor(hhmm, defaultColor) {
 
 // Add signal label to chart when bs=0 or bs=1
 addSignalLabel(candle) {
-    if (!this.chart || !this.candlestickSeries) return;
-    if (candle.bs === undefined || candle.bs === null || candle.bs === '') return;
+    if (!candle.bs) return;
 
-    const bsValue = Number(candle.bs);
-    if (bsValue !== 0 && bsValue !== 1) return;
+    const reason = candle.bs_reason || (
+        candle.bs === 1 ? "Buy at 17990. Target T1, 18,000. Target T2, 18,100. Target T3, 18,200. Stop loss, 17,958" : "Sell signal"
+    );
 
-    const isBuy = bsValue === 1;
-    const labelText = isBuy ? 'Buy' : 'Sell';
-    const cssClass = isBuy ? 'buy' : 'sell';
-    const position = isBuy ? 'below' : 'above';
+    const anchorPrice = candle.high + (candle.high * 0.01); // place above high
+    const time = candle.time;
 
-    // Anchor prices: for Buy anchor to LOW (pointer points to low); for Sell anchor to HIGH
-    const priceForPosition = isBuy ? candle.low : candle.high;
-    const timeForPosition = candle.time;
+    // remove old box for same timestamp
+    document.querySelectorAll(`.sticky-signal[data-time="${time}"]`)
+        .forEach(el => el.remove());
 
-    const chartContainer = document.getElementById('chart');
-    if (!chartContainer) return;
+    const box = document.createElement("div");
+    box.className = `sticky-signal ${candle.bs === 1 ? "sticky-buy" : "sticky-sell"}`;
+    box.dataset.time = time;
 
-    // create tag
-    const tag = document.createElement('div');
-    tag.className = `signal-tag ${cssClass}`;
-    tag.textContent = labelText;
-    tag.style.visibility = 'hidden';
-    chartContainer.appendChild(tag);
+    box.innerHTML = `
+        <div class="sticky-title">${candle.bs === 1 ? "BUY" : "SELL"}</div>
+        <div class="sticky-reason">${reason}</div>
+    `;
 
-    // pointer height MUST match CSS (6px here)
-    const POINTER_H = 6;
-    const EXTRA_MARGIN = 8; // spacing between pointer tip and tag edge / candle
+    document.body.appendChild(box);
 
-    const updatePosition = () => {
-        requestAnimationFrame(() => {
-            const x = this.chart.timeScale().timeToCoordinate(timeForPosition);
-            const y = this.candlestickSeries.priceToCoordinate(priceForPosition);
-    
-            if (typeof x !== 'number' || typeof y !== 'number' || Number.isNaN(x) || Number.isNaN(y)) {
-                tag.style.visibility = 'hidden';
-                return;
-            }
-    
-            const rect = chartContainer.getBoundingClientRect();
-            if (x < 0 || x > rect.width || y < 0 || y > rect.height) {
-                tag.style.visibility = 'hidden';
-                return;
-            }
-    
-            const tagHeight = tag.offsetHeight || 20;
-            const POINTER_H = 6;
-            const EXTRA_MARGIN = 8;
-    
-            // Calculate ideal position
-            let finalY = position === 'above'
-                ? y - (tagHeight + POINTER_H + EXTRA_MARGIN)
-                : y + (POINTER_H + EXTRA_MARGIN);
-    
-            // --- Clamp the tag inside chart bounds ---
-            const minY = 5; // padding from top
-            const maxY = rect.height - tagHeight - 5; // padding from bottom
-            if (finalY < minY) finalY = minY;
-            if (finalY > maxY) finalY = maxY;
-    
-            // Apply positions
-            tag.style.left = `${x}px`;
-            tag.style.top = `${finalY}px`;
-            tag.style.visibility = 'visible';
-    
-            // trigger animation if not visible yet
-            if (!tag.classList.contains('visible')) {
-                setTimeout(() => tag.classList.add('visible'), 10);
-            }
-        });
+    const chartEl = document.getElementById("chart");
+
+    const updatePos = () => {
+        const chartRect = chartEl.getBoundingClientRect();
+
+        const tx = this.chart.timeScale().timeToCoordinate(time);
+        const py = this.candlestickSeries.priceToCoordinate(anchorPrice);
+
+        if (tx === null || py === null) {
+            box.style.display = "none";
+            return;
+        }
+
+        const pageX = chartRect.left + window.scrollX + tx;
+        const pageY = chartRect.top + window.scrollY + py;
+
+        // measure box after render
+        const bRect = box.getBoundingClientRect();
+
+        // place the box ABOVE the candle
+        let left = pageX - bRect.width / 2;
+        let top  = pageY - bRect.height - 14;  // 14px gives room for arrow
+
+        // keep inside chart horizontally
+        if (left < chartRect.left + 5) left = chartRect.left + 5;
+        if (left + bRect.width > chartRect.right - 5)
+            left = chartRect.right - bRect.width - 5;
+
+        // keep inside top boundary
+        if (top < chartRect.top + 5)
+            top = chartRect.top + 5;
+
+        box.style.left = `${left}px`;
+        box.style.top  = `${top}px`;
     };
-    
-    // initial draw
-    updatePosition();
 
-    // subscribe to continuous events (zoom/pan/scroll) for smooth updates
-    const ts = this.chart.timeScale();
-    const unsubVisible = ts.subscribeVisibleTimeRangeChange(updatePosition);
-    const unsubLogical = ts.subscribeVisibleLogicalRangeChange(updatePosition);
-    const unsubCross = this.chart.subscribeCrosshairMove(updatePosition);
-    const resizeHandler = () => requestAnimationFrame(updatePosition);
-    window.addEventListener('resize', resizeHandler);
+    updatePos();
 
-    // store for cleanup later
-    this.htmlSignalTags = this.htmlSignalTags || [];
-    this.htmlSignalTags.push({
-        time: timeForPosition,
-        price: priceForPosition,
-        el: tag,
-        unsubVisible,
-        unsubLogical,
-        unsubCross,
-        resizeHandler
-    });
-
-    // keep array bounded to avoid too many tags
-    const MAX_TAGS = 300;
-    if (this.htmlSignalTags.length > MAX_TAGS) {
-        const removed = this.htmlSignalTags.shift();
-        try {
-            if (removed.unsubVisible) removed.unsubVisible();
-            if (removed.unsubLogical) removed.unsubLogical();
-            if (removed.unsubCross) removed.unsubCross();
-            if (removed.resizeHandler) window.removeEventListener('resize', removed.resizeHandler);
-            if (removed.el && removed.el.parentNode) removed.el.parentNode.removeChild(removed.el);
-        } catch (e) { /* ignore */ }
-    }
-
-    console.log(`${labelText} tag added at ${timeForPosition}`);
+    this.chart.timeScale().subscribeVisibleTimeRangeChange(updatePos);
+    this.chart.subscribeCrosshairMove(updatePos);
+    window.addEventListener("resize", updatePos);
 }
+
+
+
+
 
 
 
@@ -1502,7 +1468,7 @@ stopBrokerStreaming() {
     startRealTimeUIUpdates() {
         clearInterval(this.realTimeUIInterval);
         this.updateWatchlistPrices();
-        this.realTimeUIInterval = setInterval(() => this.updateWatchlistPrices(), 3000);
+        this.realTimeUIInterval = setInterval(() => this.updateWatchlistPrices(), 30000);
       }
       
     
